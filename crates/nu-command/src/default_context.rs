@@ -236,6 +236,7 @@ pub fn create_default_context() -> EngineState {
             Cd,
             Cp,
             Ls,
+            Lsu,
             Mkdir,
             Mv,
             Open,
