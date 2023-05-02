@@ -996,7 +996,10 @@ fn get_prefix(
             }
             p.push(c);
         }
-        let pattern_after_star = &path.to_string_lossy().to_string()[(len_to_star + 3)..];
+        #[cfg(target_os = "windows")]
+        let pattern_after_star = &path.to_string_lossy().to_string()[(len_to_star + 3)..]; // +3 for c:\
+        #[cfg(not(target_os = "windows"))]
+        let pattern_after_star = &path.to_string_lossy().to_string()[(len_to_star)..];
         // eprintln!(
         //     "p: {:?}, len_to_star: {}, path: {}, pattern_after_start: {}",
         //     p,
