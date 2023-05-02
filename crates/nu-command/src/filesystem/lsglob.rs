@@ -10,6 +10,7 @@ use nu_protocol::{
     PipelineMetadata, ShellError, Signature, Span, Spanned, SyntaxShape, Type, Value,
 };
 use pathdiff::diff_paths;
+use rayon::prelude::*;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
@@ -101,6 +102,10 @@ impl Command for LsGlob {
             Some(p) => {
                 let p_tag = p.span;
                 let (mut prefix_only, mut pattern_only) = get_prefix(&p, &cwd)?;
+                eprintln!(
+                    "prefix_only: {:?}, pattern_only: {:?}",
+                    prefix_only, pattern_only
+                );
                 let mut p = expand_to_real_path(p.item);
 
                 let expanded = nu_path::expand_path_with(&p, &cwd);
@@ -238,20 +243,22 @@ impl Command for LsGlob {
         // }
         // Ok(Value::nothing(call_span).into_pipeline_data())
 
-        let mut paths_peek = paths.peekable();
-        if paths_peek.peek().is_none() {
-            return Err(ShellError::GenericError(
-                format!("No matches found for {}", &pathbuf.display().to_string()),
-                "Pattern, file or folder not found".to_string(),
-                Some(p_tag),
-                Some("no matches found".to_string()),
-                Vec::new(),
-            ));
-        }
+        // let mut paths_peek = paths.peekable();
+        // if paths_peek.peek().is_none() {
+        //     return Err(ShellError::GenericError(
+        //         format!("No matches found for {}", &pathbuf.display().to_string()),
+        //         "Pattern, file or folder not found".to_string(),
+        //         Some(p_tag),
+        //         Some("no matches found".to_string()),
+        //         Vec::new(),
+        //     ));
+        // }
 
         let mut hidden_dirs = vec![];
 
-        Ok(paths_peek
+        Ok(paths
+            .into_iter()
+            .par_bridge()
             .filter_map(move |x| match x {
                 Ok(path) => {
                     let metadata = match path.metadata() {
@@ -262,12 +269,12 @@ impl Command for LsGlob {
                         return None;
                     }
 
-                    if !all && !hidden_dir_specified && is_hidden_dir(&path.path()) {
-                        if path.file_type().is_dir() {
-                            hidden_dirs.push(PathBuf::from(path.path()));
-                        }
-                        return None;
-                    }
+                    // if !all && !hidden_dir_specified && is_hidden_dir(&path.path()) {
+                    //     if path.file_type().is_dir() {
+                    //         hidden_dirs.push(PathBuf::from(path.path()));
+                    //     }
+                    //     return None;
+                    // }
 
                     let prefix = Some(path.path().parent().unwrap_or_else(|| Path::new("")));
 
@@ -347,6 +354,7 @@ impl Command for LsGlob {
                 }
                 _ => Some(Value::Nothing { span: call_span }),
             })
+            .collect::<Vec<Value>>()
             .into_pipeline_data_with_metadata(
                 Box::new(PipelineMetadata {
                     data_source: DataSource::Ls,
@@ -961,7 +969,12 @@ fn get_prefix(
     pattern: &Spanned<String>,
     cwd: &Path,
 ) -> Result<(Option<PathBuf>, Vec<String>), ShellError> {
-    let path = PathBuf::from(&pattern.item);
+    let path = if pattern.item.starts_with("./") {
+        &pattern.item[2..]
+    } else {
+        &pattern.item
+    };
+    let path = PathBuf::from(&path);
     let path = expand_path_with(path, cwd);
     let is_symlink = match fs::symlink_metadata(&path) {
         Ok(attr) => attr.file_type().is_symlink(),
@@ -972,20 +985,36 @@ fn get_prefix(
         // Path is a glob pattern => do not check for existence
         // Select the longest prefix until the first '*'
         let mut p = PathBuf::new();
+        let mut len_to_star = 0;
         for c in path.components() {
             if let Component::Normal(os) = c {
                 if os.to_string_lossy().contains('*') {
                     break;
+                } else {
+                    len_to_star += os.to_string_lossy().len() + 1; // + 1 for slash
                 }
             }
             p.push(c);
         }
-        let pattern_path = PathBuf::from(&pattern.item);
-        let pattern_without_prefix = match pattern_path.strip_prefix(p.clone()) {
-            Ok(pat) => pat.to_path_buf(),
-            Err(_) => pattern_path,
-        };
-
+        let pattern_after_star = &path.to_string_lossy().to_string()[(len_to_star + 3)..];
+        // eprintln!(
+        //     "p: {:?}, len_to_star: {}, path: {}, pattern_after_start: {}",
+        //     p,
+        //     len_to_star,
+        //     path.display(),
+        //     pattern_after_star
+        // );
+        // let pattern_path = PathBuf::from(&pattern.item);
+        // let pattern_path_clone = pattern_path.clone();
+        // let pattern_without_prefix = match pattern_path.strip_prefix(p.clone()) {
+        //     Ok(pat) => pat.to_path_buf(),
+        //     Err(_) => pattern_path,
+        // };
+        // eprintln!(
+        //     "pattern_path: {:?}, pattern_without_prefix: {:?}, p: {:?}",
+        //     &pattern_path_clone, &pattern_without_prefix, &p
+        // );
+        let pattern_without_prefix = PathBuf::from(pattern_after_star);
         let patterns = pattern_without_prefix
             .display()
             .to_string()
