@@ -16,7 +16,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     path::{Component, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -102,10 +102,10 @@ impl Command for LsGlob {
             Some(p) => {
                 let p_tag = p.span;
                 let (mut prefix_only, mut pattern_only) = get_prefix(&p, &cwd)?;
-                eprintln!(
-                    "prefix_only: {:?}, pattern_only: {:?}",
-                    prefix_only, pattern_only
-                );
+                // eprintln!(
+                //     "prefix_only: {:?}, pattern_only: {:?}",
+                //     prefix_only, pattern_only
+                // );
                 let mut p = expand_to_real_path(p.item);
 
                 let expanded = nu_path::expand_path_with(&p, &cwd);
@@ -254,7 +254,7 @@ impl Command for LsGlob {
         //     ));
         // }
 
-        let mut hidden_dirs = vec![];
+        let hidden_dirs = Arc::new(Mutex::new(Vec::new()));
 
         Ok(paths
             .into_iter()
@@ -265,16 +265,21 @@ impl Command for LsGlob {
                         Ok(metadata) => Some(metadata),
                         Err(_) => None,
                     };
-                    if path_contains_hidden_folder(&path.path(), &hidden_dirs) {
+                    {
+                        let hidden_dir_clone = Arc::clone(&hidden_dirs);
+                        let hidden_dir_mutex = hidden_dir_clone.lock().unwrap();
+                        if path_contains_hidden_folder(&path.path(), &hidden_dir_mutex) {
+                            return None;
+                        }
+                    }
+                    if !all && !hidden_dir_specified && is_hidden_dir(&path.path()) {
+                        if path.file_type().is_dir() {
+                            let hidden_dir_clone = Arc::clone(&hidden_dirs);
+                            let mut hidden_dir_mutex = hidden_dir_clone.lock().unwrap();
+                            hidden_dir_mutex.push(path.path().to_path_buf());
+                        }
                         return None;
                     }
-
-                    // if !all && !hidden_dir_specified && is_hidden_dir(&path.path()) {
-                    //     if path.file_type().is_dir() {
-                    //         hidden_dirs.push(PathBuf::from(path.path()));
-                    //     }
-                    //     return None;
-                    // }
 
                     let prefix = Some(path.path().parent().unwrap_or_else(|| Path::new("")));
 
@@ -354,7 +359,8 @@ impl Command for LsGlob {
                 }
                 _ => Some(Value::Nothing { span: call_span }),
             })
-            .collect::<Vec<Value>>()
+            .collect::<Vec<_>>()
+            .into_iter()
             .into_pipeline_data_with_metadata(
                 Box::new(PipelineMetadata {
                     data_source: DataSource::Ls,
