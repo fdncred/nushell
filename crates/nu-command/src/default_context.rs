@@ -103,6 +103,7 @@ pub fn create_default_context() -> EngineState {
 
         // Misc
         bind_command! {
+            Source,
             Tutor,
         };
 
@@ -444,7 +445,6 @@ pub fn create_default_context() -> EngineState {
             MathEvalDeprecated,
             OldAlias,
             RPadDeprecated,
-            Source,
             StrCollectDeprecated,
             StrDatetimeDeprecated,
             StrDecimalDeprecated,
