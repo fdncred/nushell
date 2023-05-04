@@ -258,6 +258,7 @@ pub fn create_default_context() -> EngineState {
             Clear,
             Du,
             Input,
+            InputList,
             Kill,
             Sleep,
             TermSize,
