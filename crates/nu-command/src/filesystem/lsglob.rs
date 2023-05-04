@@ -1,6 +1,8 @@
+#![allow(warnings)]
 use crate::DirBuilder;
 use crate::DirInfo;
 use chrono::{DateTime, Local, LocalResult, TimeZone, Utc};
+use jwalk::{Parallelism, WalkDirGeneric};
 use nu_engine::{env::current_dir, CallExt};
 use nu_path::{canonicalize_with, expand_path_with, expand_to_real_path};
 use nu_protocol::{
@@ -11,12 +13,13 @@ use nu_protocol::{
 };
 use pathdiff::diff_paths;
 use rayon::prelude::*;
+use std::cmp::Ordering;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     path::{Component, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -42,22 +45,22 @@ impl Command for LsGlob {
             // Using a string instead of a glob pattern shape so it won't auto-expand
             .optional("pattern", SyntaxShape::String, "the glob pattern to use")
             .switch("all", "Show hidden files", Some('a'))
-            .switch(
-                "long",
-                "Get all available columns for each entry (slower; columns are platform-dependent)",
-                Some('l'),
-            )
-            .switch(
-                "short-names",
-                "Only print the file names, and not the path",
-                Some('s'),
-            )
-            .switch("full-paths", "display paths as absolute paths", Some('f'))
-            .switch(
-                "du",
-                "Display the apparent directory size (\"disk usage\") in place of the directory metadata size",
-                Some('d'),
-            )
+            // .switch(
+            //     "long",
+            //     "Get all available columns for each entry (slower; columns are platform-dependent)",
+            //     Some('l'),
+            // )
+            // .switch(
+            //     "short-names",
+            //     "Only print the file names, and not the path",
+            //     Some('s'),
+            // )
+            // .switch("full-paths", "display paths as absolute paths", Some('f'))
+            // .switch(
+            //     "du",
+            //     "Display the apparent directory size (\"disk usage\") in place of the directory metadata size",
+            //     Some('d'),
+            // )
             .switch(
                 "directory",
                 "List the specified directory itself instead of its contents",
@@ -75,17 +78,18 @@ impl Command for LsGlob {
         _input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let all = call.has_flag("all");
-        let long = call.has_flag("long");
-        let short_names = call.has_flag("short-names");
-        let full_paths = call.has_flag("full-paths");
-        let du = call.has_flag("du");
+        // let long = call.has_flag("long");
+        // let short_names = call.has_flag("short-names");
+        // let full_paths = call.has_flag("full-paths");
+        // let du = call.has_flag("du");
         let directory = call.has_flag("directory");
-        let use_mime_type = call.has_flag("mime-type");
+        // let use_mime_type = call.has_flag("mime-type");
         let ctrl_c = engine_state.ctrlc.clone();
         let call_span = call.head;
         let cwd = current_dir(engine_state, stack)?;
 
         let pattern_arg: Option<Spanned<String>> = call.opt(engine_state, stack, 0)?;
+        let pat_arg_clone = &pattern_arg.clone();
 
         let pattern_arg = {
             if let Some(path) = pattern_arg {
@@ -102,10 +106,10 @@ impl Command for LsGlob {
             Some(p) => {
                 let p_tag = p.span;
                 let (mut prefix_only, mut pattern_only) = get_prefix(&p, &cwd)?;
-                // eprintln!(
-                //     "prefix_only: {:?}, pattern_only: {:?}",
-                //     prefix_only, pattern_only
-                // );
+                eprintln!(
+                    "prefix_only: {:?}, pattern_only: {:?}",
+                    prefix_only, pattern_only
+                );
                 let mut p = expand_to_real_path(p.item);
 
                 let expanded = nu_path::expand_path_with(&p, &cwd);
@@ -174,6 +178,11 @@ impl Command for LsGlob {
             }
         };
 
+        eprintln!(
+            "pathbuf: {:?}, p_tag: {:?}, absolute_path: {}, prefix_only: {:?}, pattern_only: {:?}",
+            &pathbuf, p_tag, absolute_path, prefix_only, patterns_only
+        );
+
         let hidden_dir_specified = is_hidden_dir(&pathbuf);
         let max_depth = if patterns_only.iter().any(|f| f.contains("**")) {
             usize::MAX
@@ -186,27 +195,27 @@ impl Command for LsGlob {
             None => cwd.clone(),
         };
 
-        let paths = match globwalk::GlobWalkerBuilder::from_patterns(&prefix, &patterns_only[..])
-            .min_depth(0)
-            .max_depth(max_depth)
-            // .follow_links(true)
-            // .max_open(10)
-            // // .sort_by(cmp)
-            // .contents_first(true)
-            // // .file_type(file_type)
-            .build()
-        {
-            Ok(paths) => paths.into_iter(),
-            Err(_) => {
-                return Err(ShellError::GenericError(
-                    format!("No matches found for {}", &pathbuf.display().to_string()),
-                    "Pattern, file or folder not found".to_string(),
-                    Some(p_tag),
-                    Some("no matches found".to_string()),
-                    Vec::new(),
-                ));
-            }
-        };
+        // let paths = match globwalk::GlobWalkerBuilder::from_patterns(&prefix, &patterns_only[..])
+        //     .min_depth(0)
+        //     .max_depth(max_depth)
+        //     // .follow_links(true)
+        //     // .max_open(10)
+        //     // // .sort_by(cmp)
+        //     // .contents_first(true)
+        //     // // .file_type(file_type)
+        //     .build()
+        // {
+        //     Ok(paths) => paths.into_iter(),
+        //     Err(_) => {
+        //         return Err(ShellError::GenericError(
+        //             format!("No matches found for {}", &pathbuf.display().to_string()),
+        //             "Pattern, file or folder not found".to_string(),
+        //             Some(p_tag),
+        //             Some("no matches found".to_string()),
+        //             Vec::new(),
+        //         ));
+        //     }
+        // };
         // for path in paths.into_iter() {
         //     let p = match path {
         //         Ok(p) => p,
@@ -241,7 +250,99 @@ impl Command for LsGlob {
         //         p.path_is_symlink()
         //     );
         // }
-        // Ok(Value::nothing(call_span).into_pipeline_data())
+
+        // let mut total: u64 = 0;
+        // for dir_entry_result in WalkDirGeneric::<((), Option<u64>)>::new(&prefix)
+        //     .skip_hidden(false)
+        //     .parallelism(Parallelism::RayonNewPool(32))
+        //     .process_read_dir(|_, _, _, dir_entry_results| {
+        //         dir_entry_results.iter_mut().for_each(|dir_entry_result| {
+        //             if let Ok(dir_entry) = dir_entry_result {
+        //                 if !dir_entry.file_type.is_dir() {
+        //                     dir_entry.client_state =
+        //                         Some(dir_entry.metadata().map(|m| m.len()).unwrap_or_default());
+        //                 }
+        //             }
+        //         })
+        //     })
+        // {
+        //     match dir_entry_result {
+        //         Ok(dir_entry) => {
+        //             if let Some(len) = &dir_entry.client_state {
+        //                 // eprintln!("counting {:?}", dir_entry.path());
+        //                 total += len;
+        //             }
+        //         }
+        //         Err(error) => {
+        //             println!("Read dir_entry error: {}", error);
+        //         }
+        //     }
+        // }
+
+        // println!("path: {} total bytes: {}", prefix.display(), total);
+
+        let walk_dir = WalkDirGeneric::<((usize), (bool))>::new(&prefix).process_read_dir(
+            |depth, path, read_dir_state, children| {
+                // 1. Custom sort
+                children.sort_by(|a, b| match (a, b) {
+                    (Ok(a), Ok(b)) => a.file_name.cmp(&b.file_name),
+                    (Ok(_), Err(_)) => Ordering::Less,
+                    (Err(_), Ok(_)) => Ordering::Greater,
+                    (Err(_), Err(_)) => Ordering::Equal,
+                });
+                // 2. Custom filter
+                children.retain(|dir_entry_result| {
+                    dir_entry_result
+                        .as_ref()
+                        .map(|dir_entry| {
+                            dir_entry
+                                .file_name
+                                .to_str()
+                                .map(|s| s.chars().count() > 8)
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(true)
+                });
+                // 3. Custom skip
+                // children.iter_mut().for_each(|dir_entry_result| {
+                //     if let Ok(dir_entry) = dir_entry_result {
+                //         if dir_entry.depth == 4 {
+                //             dir_entry.read_children_path = None;
+                //         }
+                //     }
+                // });
+                // 4. Custom state
+                *read_dir_state += 1;
+                children.first_mut().map(|dir_entry_result| {
+                    if let Ok(dir_entry) = dir_entry_result {
+                        dir_entry.client_state = true;
+                    }
+                });
+            },
+        );
+
+        for entry in walk_dir {
+            // eprintln!("{:?}", entry);
+            // println!("{}", entry?.path().display());
+            let item = entry.map_err(|err| {
+                ShellError::GenericError(
+                    "Error with DirEntry".into(),
+                    err.to_string(),
+                    Some(call_span),
+                    None,
+                    Vec::new(),
+                )
+            })?;
+
+            println!(
+                "P:{}, F:{}, C:{}, D:{}",
+                item.path().display(),
+                item.file_name.to_string_lossy(),
+                item.file_name.to_str().unwrap_or_default().chars().count(),
+                item.depth,
+            );
+        }
+        Ok(Value::nothing(call_span).into_pipeline_data())
 
         // let mut paths_peek = paths.peekable();
         // if paths_peek.peek().is_none() {
@@ -254,121 +355,113 @@ impl Command for LsGlob {
         //     ));
         // }
 
-        let hidden_dirs = Arc::new(Mutex::new(Vec::new()));
+        // let mut hidden_dirs = vec![];
 
-        Ok(paths
-            .into_iter()
-            .par_bridge()
-            .filter_map(move |x| match x {
-                Ok(path) => {
-                    let metadata = match path.metadata() {
-                        Ok(metadata) => Some(metadata),
-                        Err(_) => None,
-                    };
-                    {
-                        let hidden_dir_clone = Arc::clone(&hidden_dirs);
-                        let hidden_dir_mutex = hidden_dir_clone.lock().unwrap();
-                        if path_contains_hidden_folder(&path.path(), &hidden_dir_mutex) {
-                            return None;
-                        }
-                    }
-                    if !all && !hidden_dir_specified && is_hidden_dir(&path.path()) {
-                        if path.file_type().is_dir() {
-                            let hidden_dir_clone = Arc::clone(&hidden_dirs);
-                            let mut hidden_dir_mutex = hidden_dir_clone.lock().unwrap();
-                            hidden_dir_mutex.push(path.path().to_path_buf());
-                        }
-                        return None;
-                    }
+        // Ok(paths
+        //     .into_iter()
+        //     .par_bridge()
+        //     .filter_map(move |x| match x {
+        //         Ok(path) => {
+        //             let metadata = match path.metadata() {
+        //                 Ok(metadata) => Some(metadata),
+        //                 Err(_) => None,
+        //             };
+        //             if path_contains_hidden_folder(&path.path(), &hidden_dirs) {
+        //                 return None;
+        //             }
 
-                    let prefix = Some(path.path().parent().unwrap_or_else(|| Path::new("")));
+        //             // if !all && !hidden_dir_specified && is_hidden_dir(&path.path()) {
+        //             //     if path.file_type().is_dir() {
+        //             //         hidden_dirs.push(PathBuf::from(path.path()));
+        //             //     }
+        //             //     return None;
+        //             // }
 
-                    let display_name = if short_names {
-                        Some(path.file_name().to_string_lossy().to_string())
-                    } else if full_paths || absolute_path {
-                        Some(path.path().to_string_lossy().to_string())
-                    } else if let Some(prefix) = &prefix {
-                        if let Ok(remainder) = path.path().strip_prefix(prefix) {
-                            if directory {
-                                // When the path is the same as the cwd, path_diff should be "."
-                                let path_diff = if let Some(path_diff_not_dot) =
-                                    diff_paths(&path.path(), &cwd)
-                                {
-                                    let path_diff_not_dot = path_diff_not_dot.to_string_lossy();
-                                    if path_diff_not_dot.is_empty() {
-                                        ".".to_string()
-                                    } else {
-                                        path_diff_not_dot.to_string()
-                                    }
-                                } else {
-                                    path.path().to_string_lossy().to_string()
-                                };
+        //             let prefix = Some(path.path().parent().unwrap_or_else(|| Path::new("")));
 
-                                Some(path_diff)
-                            } else {
-                                let new_prefix = if let Some(pfx) = diff_paths(prefix, &cwd) {
-                                    pfx
-                                } else {
-                                    prefix.to_path_buf()
-                                };
+        //             let display_name = if short_names {
+        //                 Some(path.file_name().to_string_lossy().to_string())
+        //             } else if full_paths || absolute_path {
+        //                 Some(path.path().to_string_lossy().to_string())
+        //             } else if let Some(prefix) = &prefix {
+        //                 if let Ok(remainder) = path.path().strip_prefix(prefix) {
+        //                     if directory {
+        //                         // When the path is the same as the cwd, path_diff should be "."
+        //                         let path_diff = if let Some(path_diff_not_dot) =
+        //                             diff_paths(&path.path(), &cwd)
+        //                         {
+        //                             let path_diff_not_dot = path_diff_not_dot.to_string_lossy();
+        //                             if path_diff_not_dot.is_empty() {
+        //                                 ".".to_string()
+        //                             } else {
+        //                                 path_diff_not_dot.to_string()
+        //                             }
+        //                         } else {
+        //                             path.path().to_string_lossy().to_string()
+        //                         };
 
-                                Some(new_prefix.join(remainder).to_string_lossy().to_string())
-                            }
-                        } else {
-                            Some(path.path().to_string_lossy().to_string())
-                        }
-                    } else {
-                        Some(path.path().to_string_lossy().to_string())
-                    }
-                    .ok_or_else(|| {
-                        ShellError::GenericError(
-                            format!(
-                                "Invalid file name: {:}",
-                                path.path().to_string_lossy().to_string()
-                            ),
-                            "invalid file name".into(),
-                            Some(call_span),
-                            None,
-                            Vec::new(),
-                        )
-                    });
+        //                         Some(path_diff)
+        //                     } else {
+        //                         let new_prefix = if let Some(pfx) = diff_paths(prefix, &cwd) {
+        //                             pfx
+        //                         } else {
+        //                             prefix.to_path_buf()
+        //                         };
 
-                    match display_name {
-                        Ok(name) => {
-                            let entry = dir_entry_dict(
-                                &path.path(),
-                                &name,
-                                metadata.as_ref(),
-                                call_span,
-                                long,
-                                du,
-                                ctrl_c.clone(),
-                                use_mime_type,
-                            );
-                            match entry {
-                                Ok(value) => Some(value),
-                                Err(err) => Some(Value::Error {
-                                    error: Box::new(err),
-                                }),
-                            }
-                        }
-                        Err(err) => Some(Value::Error {
-                            error: Box::new(err),
-                        }),
-                    }
-                }
-                _ => Some(Value::Nothing { span: call_span }),
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .into_pipeline_data_with_metadata(
-                Box::new(PipelineMetadata {
-                    data_source: DataSource::Ls,
-                }),
-                engine_state.ctrlc.clone(),
-            ))
+        //                         Some(new_prefix.join(remainder).to_string_lossy().to_string())
+        //                     }
+        //                 } else {
+        //                     Some(path.path().to_string_lossy().to_string())
+        //                 }
+        //             } else {
+        //                 Some(path.path().to_string_lossy().to_string())
+        //             }
+        //             .ok_or_else(|| {
+        //                 ShellError::GenericError(
+        //                     format!(
+        //                         "Invalid file name: {:}",
+        //                         path.path().to_string_lossy().to_string()
+        //                     ),
+        //                     "invalid file name".into(),
+        //                     Some(call_span),
+        //                     None,
+        //                     Vec::new(),
+        //                 )
+        //             });
 
-        // Ok(Value::nothing(call_span).into_pipeline_data())
+        //             match display_name {
+        //                 Ok(name) => {
+        //                     let entry = dir_entry_dict(
+        //                         &path.path(),
+        //                         &name,
+        //                         metadata.as_ref(),
+        //                         call_span,
+        //                         long,
+        //                         du,
+        //                         ctrl_c.clone(),
+        //                         use_mime_type,
+        //                     );
+        //                     match entry {
+        //                         Ok(value) => Some(value),
+        //                         Err(err) => Some(Value::Error {
+        //                             error: Box::new(err),
+        //                         }),
+        //                     }
+        //                 }
+        //                 Err(err) => Some(Value::Error {
+        //                     error: Box::new(err),
+        //                 }),
+        //             }
+        //         }
+        //         _ => Some(Value::Nothing { span: call_span }),
+        //     })
+        //     .collect::<Vec<Value>>()
+        //     .into_pipeline_data_with_metadata(
+        //         Box::new(PipelineMetadata {
+        //             data_source: DataSource::Ls,
+        //         }),
+        //         engine_state.ctrlc.clone(),
+        //     ))
     }
 
     fn examples(&self) -> Vec<Example> {
