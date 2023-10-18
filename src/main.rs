@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         crossterm::terminal::disable_raw_mode().expect("unable to disable raw mode");
         miette_hook(x);
     }));
-
+    env_logger::init();
     // Get initial current working directory.
     let init_cwd = get_init_cwd();
     let mut engine_state = get_engine_state();

@@ -36,6 +36,8 @@ use std::{num::ParseIntError, str};
 #[cfg(feature = "plugin")]
 use crate::parse_keywords::parse_register;
 
+use fun_time::fun_time;
+
 pub fn garbage(span: Span) -> Expression {
     Expression::garbage(span)
 }
@@ -5980,6 +5982,12 @@ fn wrap_expr_with_collect(working_set: &mut StateWorkingSet, expr: &Expression) 
 // Parses a vector of u8 to create an AST Block. If a file name is given, then
 // the name is stored in the working set. When parsing a source without a file
 // name, the source of bytes is stored as "source"
+#[fun_time(
+    message = "parse: {fname:?}",
+    when = "always",
+    reporting = "log",
+    level = "warn"
+)]
 pub fn parse(
     working_set: &mut StateWorkingSet,
     fname: Option<&str>,
