@@ -36,7 +36,7 @@ pub enum Expr {
     Directory(String, bool),
     GlobPattern(String, bool),
     String(String),
-    RawString(String),
+    RawString(String), // Introduce RawString mainly for different highliting to String.
     CellPath(CellPath),
     FullCellPath(Box<FullCellPath>),
     ImportPattern(Box<ImportPattern>),

@@ -583,7 +583,6 @@ pub fn parse_multispan_value(
     spans_idx: &mut usize,
     shape: &SyntaxShape,
 ) -> Expression {
-    trace!("parse multispan value");
     match shape {
         SyntaxShape::VarWithOptType => {
             trace!("parsing: var with opt type");
@@ -1622,7 +1621,7 @@ pub fn parse_raw_string(working_set: &mut StateWorkingSet, span: Span) -> Expres
         Expression {
             expr: Expr::RawString(token),
             span,
-            ty: Type::RawString,
+            ty: Type::String,
             custom_completion: None,
         }
     } else {
@@ -6306,7 +6305,6 @@ pub fn parse(
     contents: &[u8],
     scoped: bool,
 ) -> Arc<Block> {
-    trace!("parse");
     let name = match fname {
         Some(fname) => {
             // use the canonical name for this filename

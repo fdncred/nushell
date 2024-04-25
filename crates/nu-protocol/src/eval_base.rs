@@ -133,7 +133,8 @@ pub trait Eval {
             }
             Expr::Keyword(kw) => Self::eval::<D>(state, mut_state, &kw.expr),
             Expr::String(s) => Ok(Value::string(s.clone(), expr.span)),
-            Expr::RawString(s) => Ok(Value::raw_string(s.clone(), expr.span)),
+            // RawString expression is actually a value of string.
+            Expr::RawString(s) => Ok(Value::string(s.clone(), expr.span)),
             Expr::Nothing => Ok(Value::nothing(expr.span)),
             Expr::ValueWithUnit(value) => match Self::eval::<D>(state, mut_state, &value.expr)? {
                 Value::Int { val, .. } => value.unit.item.build_value(val, value.unit.span),
