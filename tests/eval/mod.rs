@@ -46,6 +46,10 @@ fn test_eval(source: &str, expected_out: ExpectedOut) {
 
             match expected_out {
                 Eq(eq) => {
+                    eprintln!(
+                        "AST: {} IR: {} EQ: {} AST_STATUS: {:?} IR_STATUS: {:?}",
+                        actual_ast.out, actual_ir.out, eq, actual_ast.status, actual_ir.status
+                    );
                     assert_eq!(actual_ast.out, eq);
                     assert_eq!(actual_ir.out, eq);
                     assert!(actual_ast.status.success());
@@ -383,6 +387,21 @@ fn for_seq() {
 #[test]
 fn early_return() {
     test_eval("do { return 'foo'; 'bar' }", Eq("foo"))
+}
+
+#[test]
+fn return_with_number_piped_in() {
+    test_eval("do { 5 | return }", Eq("5"))
+}
+
+#[test]
+fn return_with_string_piped_in() {
+    test_eval("do { 'boo!' | return }", Eq("boo!"))
+}
+
+#[test]
+fn return_with_record_piped_in() {
+    test_eval("do { {a: 1, b: 2} | return }", Eq("{a: 1, b: 2}"))
 }
 
 #[test]
