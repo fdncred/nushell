@@ -115,6 +115,11 @@ fn create_table_with_header(
     let headers = collect_headers(headers, false);
     table.set_row(0, headers);
 
+    // Apply custom column widths if provided by heuristics
+    if let Some(widths) = opts.column_widths.borrow().as_ref() {
+        table.set_column_widths(widths);
+    }
+
     Ok(Some(table))
 }
 
@@ -135,6 +140,13 @@ fn create_table_with_header_and_index(
     table.set_indent(opts.config.table.padding);
 
     table.set_row(0, head.clone());
+
+    // Apply custom column widths if provided, including width for index column
+    if let Some(widths) = opts.column_widths.borrow().as_ref() {
+        let mut full_widths = vec![5]; // index column width
+        full_widths.extend(widths.iter());
+        table.set_column_widths(&full_widths);
+    }
 
     for (row, item) in input.into_iter().enumerate() {
         opts.signals.check(&opts.span)?;

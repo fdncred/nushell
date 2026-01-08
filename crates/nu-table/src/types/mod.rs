@@ -48,6 +48,7 @@ pub struct TableOpts<'a> {
     pub mode: TableMode,
     pub index_offset: usize,
     pub index_remove: bool,
+    pub column_widths: std::cell::RefCell<Option<Vec<usize>>>,
 }
 
 impl<'a> TableOpts<'a> {
@@ -73,6 +74,7 @@ impl<'a> TableOpts<'a> {
             mode,
             index_offset,
             index_remove,
+            column_widths: std::cell::RefCell::new(None),
         }
     }
 }

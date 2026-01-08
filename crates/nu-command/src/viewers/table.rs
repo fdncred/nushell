@@ -221,6 +221,9 @@ struct TableConfig {
     index: Option<usize>,
     use_ansi_coloring: bool,
     icons: bool,
+    /// Computed column widths for automatic table sizing heuristic.
+    /// Set from the first batch of data to ensure consistent column widths.
+    column_widths: std::cell::RefCell<Option<Vec<usize>>>,
 }
 
 impl TableConfig {
@@ -241,6 +244,7 @@ impl TableConfig {
             index,
             use_ansi_coloring,
             icons,
+            column_widths: std::cell::RefCell::new(None),
         }
     }
 }
@@ -861,6 +865,34 @@ impl PagingTableCreator {
         if batch.is_empty() {
             return Ok(None);
         }
+        // Compute column widths from the first batch if not already done
+        if self.table_config.column_widths.borrow().is_none() {
+            let headers = nu_engine::column::get_columns(&batch);
+            if !headers.is_empty() {
+                let mut widths = vec![0; headers.len()];
+                // Start with header lengths, minimum 1, maximum 10
+                for (i, header) in headers.iter().enumerate() {
+                    widths[i] = header.len().clamp(1, 10);
+                }
+                // Analyze sample rows
+                for val in batch.iter().take(10) {
+                    if let Value::Record { val: record, .. } = val {
+                        for (i, header) in headers.iter().enumerate() {
+                            if let Some(value) = record.get(header) {
+                                let content = value.to_expanded_string("", &Config::default());
+                                let content_len = content.len().min(20); // Limit content length consideration
+                                widths[i] = widths[i].max(content_len.max(1));
+                            }
+                        }
+                    }
+                }
+                // Cap at 10, minimum 1 (more conservative to avoid papergrid panics)
+                for w in &mut widths {
+                    *w = (*w).clamp(1, 10);
+                }
+                *self.table_config.column_widths.borrow_mut() = Some(widths);
+            }
+        }
 
         let opts = self.create_table_opts();
         build_table_batch(batch, self.table_config.view.clone(), opts, self.head)
@@ -1241,7 +1273,9 @@ fn create_table_opts<'a>(
     let width = table_cfg.width;
     let theme = table_cfg.theme;
 
-    TableOpts::new(cfg, comp, signals, span, width, theme, offset, index)
+    let opts = TableOpts::new(cfg, comp, signals, span, width, theme, offset, index);
+    *opts.column_widths.borrow_mut() = table_cfg.column_widths.borrow().clone();
+    opts
 }
 
 fn get_cwd(engine_state: &EngineState, stack: &mut Stack) -> ShellResult<Option<NuPathBuf>> {

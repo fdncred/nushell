@@ -273,6 +273,15 @@ impl NuTable {
         self.config.border_color = (!color.is_plain()).then_some(color);
     }
 
+    /// Sets the column widths for the table. This is used to apply custom widths
+    /// computed by heuristics to ensure columns are appropriately sized based on content.
+    /// The widths vector should match the number of columns in the table.
+    pub fn set_column_widths(&mut self, widths: &[usize]) {
+        if widths.len() == self.count_cols {
+            self.widths.copy_from_slice(widths);
+        }
+    }
+
     pub fn clear_border_color(&mut self) {
         self.config.border_color = None;
     }
