@@ -1095,63 +1095,101 @@ impl Value {
         }
     }
 
+    /// Helper for reordering a cell path according to the experimental `reorder-cell-paths` option.
+    /// Returns either a reordered `Vec` or an error produced while walking the value (the same
+    /// errors that `follow_cell_path` would surface). When the option is disabled this simply returns
+    /// the original path.
+    fn reorder_cell_path(
+        value: &Value,
+        cell_path: &[PathMember],
+    ) -> Result<Vec<PathMember>, ShellError> {
+        let reorder = nu_experimental::REORDER_CELL_PATHS.get();
+        if !reorder {
+            return Ok(cell_path.to_vec());
+        }
+
+        let mut members: Vec<_> = cell_path.iter().map(Some).collect();
+        let mut members = members.as_mut_slice();
+        #[allow(unused_assignments)]
+        let mut store: Value = Value::test_nothing();
+        let mut current: MultiLife<'_, '_, Value> = MultiLife::Out(value);
+        let mut out = Vec::with_capacity(cell_path.len());
+
+        loop {
+            while let Some(None) = members.first() {
+                members = &mut members[1..];
+            }
+
+            if members.is_empty() {
+                break;
+            }
+
+            let member_opt = if let Value::List { .. } = &*current {
+                members
+                    .iter_mut()
+                    .find(|x| matches!(x, Some(PathMember::Int { .. })))
+                    .and_then(Option::take)
+            } else {
+                None
+            };
+
+            let member = match member_opt.or_else(|| members.first_mut().and_then(Option::take)) {
+                Some(m) => m.clone(),
+                None => break,
+            };
+
+            out.push(member.clone());
+
+            current = match current {
+                MultiLife::Out(current) => match get_value_member(current, &member) {
+                    Ok(ControlFlow::Break(_span)) => break,
+                    Ok(ControlFlow::Continue(x)) => match x {
+                        Cow::Borrowed(x) => MultiLife::Out(x),
+                        Cow::Owned(x) => {
+                            store = x;
+                            MultiLife::Local(&store)
+                        }
+                    },
+                    // if we failed to follow the path (missing column etc.) just stop reordering
+                    Err(_) => break,
+                },
+                MultiLife::Local(current) => match get_value_member(current, &member) {
+                    Ok(ControlFlow::Break(_span)) => break,
+                    Ok(ControlFlow::Continue(x)) => match x {
+                        Cow::Borrowed(x) => MultiLife::Local(x),
+                        Cow::Owned(x) => {
+                            store = x;
+                            MultiLife::Local(&store)
+                        }
+                    },
+                    Err(_) => break,
+                },
+            };
+        }
+
+        // if there are any members left that haven't been taken (because we
+        // broke out early due to an access error) append them in their original
+        // order so the caller still sees the full path.
+        out.extend(members.iter().filter_map(|x| x.cloned()));
+        Ok(out)
+    }
+
     /// Follow a given cell path into the value: for example accessing select elements in a stream or list
     pub fn follow_cell_path<'out>(
         &'out self,
         cell_path: &[PathMember],
     ) -> Result<Cow<'out, Value>, ShellError> {
-        // A dummy value is required, otherwise rust doesn't allow references, which we need for
-        // the `std::ptr::eq` comparison
+        let cell_path = Self::reorder_cell_path(self, cell_path)?;
+
+        // A dummy value is required, otherwise rust doesn't allow references, which we need for the `std::ptr::eq` comparison
         let mut store: Value = Value::test_nothing();
         let mut current: MultiLife<'out, '_, Value> = MultiLife::Out(self);
+        let mut cell_path = cell_path.as_slice();
 
-        let reorder_cell_paths = nu_experimental::REORDER_CELL_PATHS.get();
-
-        let mut members: Vec<_> = if reorder_cell_paths {
-            cell_path.iter().map(Some).collect()
-        } else {
-            Vec::new()
-        };
-        let mut members = members.as_mut_slice();
-        let mut cell_path = cell_path;
-
-        loop {
-            let member = if reorder_cell_paths {
-                // Skip any None values at the start.
-                while let Some(None) = members.first() {
-                    members = &mut members[1..];
-                }
-
-                if members.is_empty() {
-                    break;
-                }
-
-                // Reorder cell-path member access by prioritizing Int members to avoid cloning unless
-                // necessary
-                let member = if let Value::List { .. } = &*current {
-                    // If the value is a list, try to find an Int member
-                    members
-                        .iter_mut()
-                        .find(|x| matches!(x, Some(PathMember::Int { .. })))
-                        // And take it from the list of members
-                        .and_then(Option::take)
-                } else {
-                    None
-                };
-
-                let Some(member) = member.or_else(|| members.first_mut().and_then(Option::take))
-                else {
-                    break;
-                };
-                member
-            } else {
-                match cell_path {
-                    [first, rest @ ..] => {
-                        cell_path = rest;
-                        first
-                    }
-                    _ => break,
-                }
+        while let [first, rest @ ..] = cell_path {
+            let member = {
+                cell_path = rest;
+                first
             };
 
             current = match current {
@@ -1216,6 +1254,8 @@ impl Value {
         cell_path: &[PathMember],
         new_val: Value,
     ) -> Result<(), ShellError> {
+        // Keep writes in sync with reads by reordering the whole path first (just like `update_data_at_cell_path` does).
+        let cell_path = Self::reorder_cell_path(self, cell_path)?;
         let v_span = self.span();
         if let Some((member, path)) = cell_path.split_first() {
             match member {
@@ -1239,13 +1279,12 @@ impl Value {
                                     }
                                 }
                                 Value::Error { error, .. } => return Err(*error.clone()),
-                                v => {
-                                    return Err(ShellError::CantFindColumn {
-                                        col_name: col_name.clone(),
-                                        span: Some(*span),
-                                        src_span: v.span(),
-                                    });
-                                }
+                                // non-record rows (e.g. string cells in a table) are
+                                // ignored when assigning to a column.  this mirrors
+                                // the behaviour of `update` and avoids errors such as
+                                // "not a list" when the next path member is an
+                                // integer.
+                                _ => continue,
                             }
                         }
                     }
@@ -1317,6 +1356,10 @@ impl Value {
         cell_path: &[PathMember],
         new_val: Value,
     ) -> Result<(), ShellError> {
+        // We need to keep the write path in sync with the value that was read by `follow_cell_path`.
+        // That helper already applies `reorder_cell_path`, so the mutation routines have to use the same
+        // transformation when evaluating updates.
+        let cell_path = Self::reorder_cell_path(self, cell_path)?;
         let v_span = self.span();
         if let Some((member, path)) = cell_path.split_first() {
             match member {
@@ -4636,6 +4679,63 @@ mod tests {
             let formatted = string.split(' ').next().unwrap();
             assert_eq!("-0316-02-11T06:13:20+00:00", formatted);
         }
+    }
+
+    #[test]
+    fn test_reorder_cell_path_runtime() {
+        use crate::Span;
+        use crate::ast::PathMember;
+        use crate::casing::Casing;
+
+        let mut a = Value::list(
+            vec![Value::test_record(record! {
+                "foo" => Value::string("bar", Span::test_data()),
+            })],
+            Span::test_data(),
+        );
+
+        let path = vec![
+            PathMember::String {
+                val: "foo".into(),
+                span: Span::test_data(),
+                casing: Casing::Sensitive,
+                optional: false,
+            },
+            PathMember::Int {
+                val: 0,
+                span: Span::test_data(),
+                optional: false,
+            },
+        ];
+
+        let reordered = Value::reorder_cell_path(&a, &path).unwrap();
+        assert_eq!(
+            reordered,
+            vec![
+                PathMember::Int {
+                    val: 0,
+                    span: Span::test_data(),
+                    optional: false
+                },
+                PathMember::String {
+                    val: "foo".into(),
+                    span: Span::test_data(),
+                    casing: Casing::Sensitive,
+                    optional: false
+                },
+            ]
+        );
+
+        a.upsert_data_at_cell_path(&path, Value::string("baz", Span::test_data()))
+            .unwrap();
+        assert_eq!(
+            a.follow_cell_path(&reordered)
+                .unwrap()
+                .as_ref()
+                .as_str()
+                .unwrap(),
+            "baz",
+        );
     }
 
     #[test]

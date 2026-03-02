@@ -70,7 +70,7 @@ fn concat_assign_type_mismatch() {
 }
 
 #[test]
-fn concat_assign_runtime_type_mismatch() {
+fn concat_assign_runtime_type_operator_incompatible_types() {
     let actual = nu!(r#"
         mut a = [];
         $a ++= if true { 'str' }
