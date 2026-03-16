@@ -3279,6 +3279,23 @@ fn parse_let_in_pipeline() {
 }
 
 #[test]
+fn parse_non_return_pipeline_is_not_reparsed() {
+    let engine_state = EngineState::new();
+    let mut working_set = StateWorkingSet::new(&engine_state);
+
+    let block = parse(&mut working_set, None, b"ls | first", true);
+
+    assert!(
+        working_set.parse_errors.is_empty(),
+        "Parse errors: {:?}",
+        working_set.parse_errors
+    );
+
+    let pipeline = &block.pipelines[0];
+    assert_eq!(pipeline.elements.len(), 2);
+}
+
+#[test]
 fn parse_return_pipeline_as_subexpression() {
     // Register only the commands needed for this scenario so the parser resolves
     // `return` and `ls` as internal commands instead of treating them as externals.

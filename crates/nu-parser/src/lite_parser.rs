@@ -449,8 +449,21 @@ pub fn lite_parse(
                             command.pipe = Some(token.span);
                         }
                         TokenContents::Pipe => {
-                            pipeline.push(&mut command);
-                            command.pipe = Some(token.span);
+                            // If this command begins with `return` and doesn't have its own redirection, we want to treat the rest of the pipeline as the
+                            // return expression rather than splitting into a separate pipeline. That allows `return x | y` to be handled as a single `return`
+                            // call where the argument is `x | y`.
+                            let is_return = command
+                                .command_parts()
+                                .first()
+                                .map(|span| working_set.get_span_contents(*span) == b"return")
+                                .unwrap_or(false);
+
+                            if is_return && command.redirection.is_none() {
+                                command.push(token.span);
+                            } else {
+                                pipeline.push(&mut command);
+                                command.pipe = Some(token.span);
+                            }
                         }
                         TokenContents::Eol => {
                             // Handle `[Command] [Pipe] ([Comment] | [Eol])+ [Command]`
