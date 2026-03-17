@@ -328,7 +328,7 @@ fn script_with_newline_arg_does_not_split_commands() {
         sandbox.mkdir("script_newline_arg");
         sandbox.with_files(&[FileWithContent(
             "script.nu",
-            r#"def main [...args: string] { print ...($args) }"#,
+            "def main [...args: string] { print ...($args) }",
         )]);
 
         // Pass an argument that includes an escaped newline (\n). It should not split the command.
