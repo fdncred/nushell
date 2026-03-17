@@ -149,6 +149,103 @@ pub fn parse_keyword(working_set: &mut StateWorkingSet, lite_command: &LiteComma
     }
 }
 
+pub fn parse_return_keyword(
+    working_set: &mut StateWorkingSet,
+    lite_command: &LiteCommand,
+) -> Pipeline {
+    // If there is no pipeline after `return`, fall back to standard keyword parsing. This ensures `return`
+    // without pipeline behaves as before.
+    let command_parts = lite_command.command_parts();
+    if command_parts.len() <= 1 || lite_command.redirection.is_some() {
+        return parse_keyword(working_set, lite_command);
+    }
+
+    // Treat `return x | y` as a keyword-style pipeline when there is an actual pipeline after `return`.
+    // Otherwise, behave like a normal `return` call.
+    let has_pipe = command_parts
+        .iter()
+        .skip(1)
+        .any(|span| working_set.get_span_contents(*span) == b"|");
+
+    if !has_pipe {
+        return parse_keyword(working_set, lite_command);
+    }
+
+    // Parse the `return` call head so we can attach the full pipeline as a subexpression.
+    let return_head = match command_parts.first() {
+        Some(head) => *head,
+        None => return parse_keyword(working_set, lite_command),
+    };
+    let call_expr = parse_call(working_set, std::slice::from_ref(&return_head), return_head);
+
+    let Expression {
+        expr: Expr::Call(mut call),
+        ty,
+        ..
+    } = call_expr
+    else {
+        return Pipeline::from_vec(vec![call_expr]);
+    };
+
+    // Build a span that covers everything after the `return` keyword.
+    // We sort spans so `Span::merge` never sees out-of-order spans.
+    let tail_span = {
+        let mut spans: Vec<Span> = command_parts.iter().copied().skip(1).collect();
+        spans.extend(lite_command.comments.iter().copied());
+        spans.extend(
+            lite_command
+                .redirection
+                .as_ref()
+                .into_iter()
+                .flat_map(|r| r.spans()),
+        );
+        spans.sort_unstable_by_key(|span| (span.start, span.end));
+        spans.into_iter().reduce(Span::merge)
+    };
+
+    if let Some(tail_span) = tail_span {
+        let (tail_tokens, tail_error) = lex(
+            working_set.get_span_contents(tail_span),
+            tail_span.start,
+            &[],
+            &[],
+            false,
+        );
+        working_set.parse_errors.extend(tail_error);
+
+        trace!("parsing: return pipeline subexpression");
+        let tail_block = parse_block(working_set, &tail_tokens, tail_span, false, true);
+        let tail_ty = tail_block.output_type();
+        let tail_block_id = working_set.add_block(Arc::new(tail_block));
+        let tail_expr = Expression::new(
+            working_set,
+            Expr::Subexpression(tail_block_id),
+            tail_span,
+            tail_ty,
+        );
+
+        call.arguments = vec![Argument::Positional(tail_expr)];
+
+        let return_span = Span {
+            start: return_head.start,
+            end: tail_span.end,
+        };
+
+        Pipeline {
+            elements: vec![PipelineElement {
+                pipe: lite_command.pipe,
+                expr: Expression::new(working_set, Expr::Call(call), return_span, ty),
+                redirection: lite_command
+                    .redirection
+                    .as_ref()
+                    .map(|r| parse_redirection(working_set, r)),
+            }],
+        }
+    } else {
+        parse_keyword(working_set, lite_command)
+    }
+}
+
 pub fn parse_def_predecl(working_set: &mut StateWorkingSet, spans: &[Span]) {
     let mut pos = 0;
 
