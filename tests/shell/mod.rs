@@ -322,6 +322,25 @@ fn main_script_can_have_subcommands2() {
     })
 }
 
+#[test]
+fn script_with_newline_arg_does_not_split_commands() {
+    Playground::setup("script_newline_arg", |dirs, sandbox| {
+        sandbox.mkdir("script_newline_arg");
+        sandbox.with_files(&[FileWithContent(
+            "script.nu",
+            r#"def main [...args: string] { print ...($args) }"#,
+        )]);
+
+        // Pass an argument that includes an escaped newline (\n). It should not split the command.
+        let command = "nu script.nu a b \"c\\nd\"";
+
+        let actual = nu!(collapse_output: false, cwd: dirs.test(), command);
+
+        assert!(actual.err.is_empty());
+        assert!(!actual.err.contains("Command `d`"));
+    })
+}
+
 // regression test for https://github.com/nushell/nushell/issues/17719
 #[test]
 fn script_help_shows_single_subcommand() {

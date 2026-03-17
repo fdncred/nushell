@@ -1,7 +1,7 @@
 use crate::util::{eval_source, print_pipeline};
 use log::{info, trace};
 use nu_engine::eval_block;
-use nu_parser::parse;
+use nu_parser::{escape_for_script_arg, parse};
 use nu_path::absolute_with;
 use nu_protocol::{
     PipelineData, ShellError, Span, Value,
@@ -185,12 +185,17 @@ pub fn evaluate_file(
         // Print the pipeline output of the last command of the file.
         print_pipeline(engine_state, stack, pipeline, true)?;
 
-        // Invoke the main command with arguments.  Keep using `main` as the
-        // internal command name so the parser reliably resolves it; the block's
-        // signature was already rewritten to the script filename above, so help
-        // messages will show the correct `script.nu`-qualified name.
-        // Arguments with whitespaces are quoted, thus can be safely concatenated by whitespace.
-        let args = format!("main {}", args.join(" "));
+        // Invoke the main command with arguments. Keep using `main` as the internal command name
+        // so the parser reliably resolves it; the block's signature was already rewritten to the
+        // script filename above, so help messages will show the correct `script.nu`-qualified name.
+        // Newline/CR/tab characters are escaped to preserve them inside the string.
+        let args = format!(
+            "main {}",
+            args.iter()
+                .map(|arg| escape_for_script_arg(arg))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
         eval_source(
             engine_state,
             stack,
@@ -210,4 +215,41 @@ pub fn evaluate_file(
     info!("evaluate {}:{}:{}", file!(), line!(), column!());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::evaluate_file;
+    use nu_protocol::{PipelineData, Span, Value, engine::Stack};
+    use std::fs;
+
+    #[test]
+    fn evaluate_file_arg_with_newline_does_not_split_commands() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let file_path = tempdir.path().join("test.nu");
+        fs::write(&file_path, "def main [...args: string] { $args }").unwrap();
+
+        let mut engine_state =
+            nu_command::add_shell_command_context(nu_cmd_lang::create_default_context());
+        engine_state.generate_nu_constant();
+        nu_std::load_standard_library(&mut engine_state).expect("could not load standard library");
+
+        let mut stack = Stack::new();
+        stack.add_env_var(
+            "PWD".to_string(),
+            Value::string(tempdir.path().to_string_lossy(), Span::unknown()),
+        );
+        let args = vec!["a".to_string(), "b".to_string(), "c\nd".to_string()];
+        assert!(args[2].contains('\n')); // ensure the argument contains a real newline before we escape/quote it
+
+        // Should not panic or error due to the newline in the argument.
+        evaluate_file(
+            file_path.to_string_lossy().to_string(),
+            &args,
+            &mut engine_state,
+            &mut stack,
+            PipelineData::empty(),
+        )
+        .expect("evaluate_file should succeed with newline in argument");
+    }
 }
