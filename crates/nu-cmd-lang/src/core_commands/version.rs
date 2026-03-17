@@ -87,7 +87,7 @@ impl Command for Version {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Display Nu version",
+            description: "Display Nu version.",
             example: "version",
             result: None,
         }]
@@ -225,9 +225,8 @@ fn global_allocator() -> &'static str {
 #[cfg(test)]
 mod test {
     #[test]
-    fn test_examples() {
+    fn test_examples() -> nu_test_support::Result {
         use super::Version;
-        use crate::test_examples;
-        test_examples(Version)
+        nu_test_support::test().examples(Version)
     }
 }

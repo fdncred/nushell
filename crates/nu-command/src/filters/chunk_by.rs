@@ -193,6 +193,8 @@ pub fn chunk_by(
     call: &Call,
     input: PipelineData,
 ) -> Result<PipelineData, ShellError> {
+    let input = input.into_stream_or_original(engine_state);
+
     let head = call.head;
     let closure: Closure = call.req(engine_state, stack, 0)?;
 
@@ -248,9 +250,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(ChunkBy {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(ChunkBy)
     }
 }

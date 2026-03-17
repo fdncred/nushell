@@ -58,8 +58,8 @@ impl Command for JobList {
                     },
                 };
 
-                if let Some(tag) = job.tag() {
-                    record.push("tag", Value::string(tag, head));
+                if let Some(description) = job.description() {
+                    record.push("description", Value::string(description, head));
                 }
 
                 Value::record(record, head)
@@ -72,7 +72,7 @@ impl Command for JobList {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
             example: "job list",
-            description: "List all background jobs",
+            description: "List all background jobs.",
             result: None,
         }]
     }

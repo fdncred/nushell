@@ -44,22 +44,22 @@ impl Command for RandomInt {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Generate a non-negative random integer",
+                description: "Generate a non-negative random integer.",
                 example: "random int",
                 result: None,
             },
             Example {
-                description: "Generate a random integer between 0 (inclusive) and 500 (inclusive)",
+                description: "Generate a random integer between 0 (inclusive) and 500 (inclusive).",
                 example: "random int ..500",
                 result: None,
             },
             Example {
-                description: "Generate a random integer greater than or equal to 100000",
+                description: "Generate a random integer greater than or equal to 100000.",
                 example: "random int 100000..",
                 result: None,
             },
             Example {
-                description: "Generate a random integer between -10 (inclusive) and 10 (inclusive)",
+                description: "Generate a random integer between -10 (inclusive) and 10 (inclusive).",
                 example: "random int (-10)..10",
                 result: None,
             },
@@ -119,9 +119,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(RandomInt {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(RandomInt)
     }
 }

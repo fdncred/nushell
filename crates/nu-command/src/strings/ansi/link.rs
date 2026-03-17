@@ -23,7 +23,7 @@ impl Command for AnsiLink {
                 "text",
                 SyntaxShape::String,
                 "Link text. Uses uri as text if absent. In case of
-                tables, records and lists applies this text to all elements",
+                tables, records and lists applies this text to all elements.",
                 Some('t'),
             )
             .rest(
@@ -147,9 +147,7 @@ mod tests {
     use super::AnsiLink;
 
     #[test]
-    fn examples_work_as_expected() {
-        use crate::test_examples;
-
-        test_examples(AnsiLink {})
+    fn examples_work_as_expected() -> nu_test_support::Result {
+        nu_test_support::test().examples(AnsiLink)
     }
 }

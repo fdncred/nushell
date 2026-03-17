@@ -77,7 +77,7 @@ impl Command for MathCeil {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Apply the ceil function to a list of numbers",
+            description: "Apply the ceil function to a list of numbers.",
             example: "[1.5 2.3 -3.1] | math ceil",
             result: Some(Value::list(
                 vec![Value::test_int(2), Value::test_int(3), Value::test_int(-3)],
@@ -110,9 +110,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(MathCeil {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(MathCeil)
     }
 }

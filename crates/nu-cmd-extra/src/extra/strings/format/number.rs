@@ -18,7 +18,7 @@ impl Command for FormatNumber {
             .input_output_types(vec![(Type::Number, Type::record())])
             .switch(
                 "no-prefix",
-                "don't include the binary, hex or octal prefixes",
+                "Don't include the binary, hex or octal prefixes.",
                 Some('n'),
             )
             .category(Category::Conversions)
@@ -196,9 +196,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(FormatNumber {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(FormatNumber)
     }
 }

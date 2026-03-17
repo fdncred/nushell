@@ -24,7 +24,7 @@ impl Command for Enumerate {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Add an index to each element of a list",
+            description: "Add an index to each element of a list.",
             example: r#"[a, b, c] | enumerate "#,
             result: Some(Value::test_list(vec![
                 Value::test_record(record! {
@@ -74,9 +74,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(Enumerate {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(Enumerate)
     }
 }

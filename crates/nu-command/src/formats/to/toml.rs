@@ -15,7 +15,7 @@ impl Command for ToToml {
             .input_output_types(vec![(Type::record(), Type::String)])
             .switch(
                 "serialize",
-                "serialize nushell types that cannot be deserialized",
+                "Serialize nushell types that cannot be deserialized.",
                 Some('s'),
             )
             .category(Category::Formats)
@@ -27,7 +27,7 @@ impl Command for ToToml {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Outputs an TOML string representing the contents of this record",
+            description: "Outputs an TOML string representing the contents of this record.",
             example: r#"{foo: 1 bar: 'qwe'} | to toml"#,
             result: Some(Value::test_string("foo = 1\nbar = \"qwe\"\n")),
         }]
@@ -216,8 +216,8 @@ fn to_toml_datetime(datetime: &DateTime<FixedOffset>) -> toml::value::Datetime {
         // methods return values less than 65'000
         hour: datetime.hour() as u8,
         minute: datetime.minute() as u8,
-        second: datetime.second() as u8,
-        nanosecond: datetime.nanosecond(),
+        second: Some(datetime.second() as u8),
+        nanosecond: Some(datetime.nanosecond()),
     };
 
     let offset = toml::value::Offset::Custom {
@@ -239,10 +239,8 @@ mod tests {
     use chrono::TimeZone;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(ToToml {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(ToToml)
     }
 
     #[test]
@@ -267,8 +265,8 @@ mod tests {
             time: Some(toml::value::Time {
                 hour: 10,
                 minute: 12,
-                second: 44,
-                nanosecond: 0,
+                second: Some(44),
+                nanosecond: Some(0),
             }),
             offset: Some(toml::value::Offset::Custom { minutes: 120 }),
         });

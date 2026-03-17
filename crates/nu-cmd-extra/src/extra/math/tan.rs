@@ -10,7 +10,7 @@ impl Command for MathTan {
 
     fn signature(&self) -> Signature {
         Signature::build("math tan")
-            .switch("degrees", "Use degrees instead of radians", Some('d'))
+            .switch("degrees", "Use degrees instead of radians.", Some('d'))
             .input_output_types(vec![
                 (Type::Number, Type::Float),
                 (
@@ -103,9 +103,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(MathTan {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(MathTan)
     }
 }

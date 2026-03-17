@@ -69,12 +69,12 @@ impl Command for ExportEnv {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Set an environment variable",
+                description: "Set an environment variable.",
                 example: r#"export-env { $env.SPAM = 'eggs' }"#,
                 result: Some(Value::nothing(Span::test_data())),
             },
             Example {
-                description: "Set an environment variable and examine its value",
+                description: "Set an environment variable and examine its value.",
                 example: r#"export-env { $env.SPAM = 'eggs' }; $env.SPAM"#,
                 result: Some(Value::test_string("eggs")),
             },
@@ -87,9 +87,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(ExportEnv {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(ExportEnv)
     }
 }

@@ -24,13 +24,13 @@ impl Command for StorInsert {
             .required_named(
                 "table-name",
                 SyntaxShape::String,
-                "name of the table you want to insert into",
+                "Name of the table you want to insert into.",
                 Some('t'),
             )
             .named(
                 "data-record",
                 SyntaxShape::Record(vec![]),
-                "a record of column names and column values to insert into the specified table",
+                "A record of column names and column values to insert into the specified table.",
                 Some('d'),
             )
             .allow_variants_without_examples(true)
@@ -216,10 +216,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StorInsert {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StorInsert)
     }
 
     #[test]

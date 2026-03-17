@@ -1,6 +1,6 @@
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind};
 use nu_protocol::{PositionalArg, engine::Command};
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Write};
 
 use crate::{
     Id, LanguageServer,
@@ -13,11 +13,13 @@ impl LanguageServer {
 
         if !skip_description {
             // First description
-            description.push_str(&format!("{}\n", decl.description().replace('\r', "")));
+            writeln!(description, "{}", decl.description().replace('\r', ""))
+                .expect("writing to a String is infallible");
 
             // Additional description
             if !decl.extra_description().is_empty() {
-                description.push_str(&format!("\n{}\n", decl.extra_description()));
+                write!(description, "\n{}\n", decl.extra_description())
+                    .expect("writing to a String is infallible");
             }
         }
         // Usage
@@ -62,7 +64,7 @@ impl LanguageServer {
                 } else {
                     description.push('\n');
                 }
-                description.push_str(&format!("  `{}`", arg.name));
+                write!(description, "  `{}`", arg.name).expect("writing to a String is infallible");
                 description.push_str(&doc_for_arg(
                     Some(arg.shape),
                     arg.desc,
@@ -81,7 +83,8 @@ impl LanguageServer {
                 if !first {
                     description.push('\n');
                 }
-                description.push_str(&format!(" `...{}`", arg.name));
+                write!(description, " `...{}`", arg.name)
+                    .expect("writing to a String is infallible");
                 description.push_str(&doc_for_arg(
                     Some(arg.shape),
                     arg.desc,
@@ -98,7 +101,8 @@ impl LanguageServer {
             description.push_str("\n### Input/output types\n");
             description.push_str("\n```nu\n");
             for input_output in &signature.input_output_types {
-                description.push_str(&format!(" {} | {}\n", input_output.0, input_output.1));
+                writeln!(description, " {} | {}", input_output.0, input_output.1)
+                    .expect("writing to a String is infallible");
             }
             description.push_str("\n```\n");
         }
@@ -107,10 +111,12 @@ impl LanguageServer {
         if !decl.examples().is_empty() {
             description.push_str("### Example(s)\n");
             for example in decl.examples() {
-                description.push_str(&format!(
+                write!(
+                    description,
                     "  {}\n```nu\n  {}\n```\n",
                     example.description, example.example
-                ));
+                )
+                .expect("writing to a String is infallible");
             }
         }
         description
@@ -166,6 +172,11 @@ impl LanguageServer {
                             } else {
                                 format!("```\n{ty}\n```")
                             }
+                        })
+                        .or_else(|| {
+                            var.ty
+                                .follow_cell_path(&cell_path)
+                                .map(|ty| format!("```\n{ty}\n```"))
                         })
                         .unwrap_or("`unknown`".into()),
                 )
@@ -241,11 +252,14 @@ mod hover_tests {
     )]
     #[case::str_join(
         "command.nu", (5, 8),
-        "Concatenate multiple strings into a single string, with an optional separator between each.\n---\n### Usage \n```nu\n  str join {flags} (separator)\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n\n### Parameters\n\n  `separator`: `<string>` - Optional separator to use when creating string. (optional)\n\n\n### Input/output types\n\n```nu\n list<any> | string\n string | string\n\n```\n### Example(s)\n  Create a string from input\n```nu\n  ['nu', 'shell'] | str join\n```\n  Create a string from input with a separator\n```nu\n  ['nu', 'shell'] | str join '-'\n```\n"
+        "Concatenate multiple strings into a single string, with an optional separator between each.\n---\n### Usage \n```nu\n  str join {flags} (separator)\n```\n\n### Flags\n\n  `-h`, `--help` - Display the help message for this command\n\n\n### Parameters\n\n  `separator`: `<string>` - Optional separator to use when creating string. (optional)\n\n\n### Input/output types\n\n```nu\n list<any> | string\n string | string\n\n```\n### Example(s)\n  Create a string from input.\n```nu\n  ['nu', 'shell'] | str join\n```\n  Create a string from input with a separator.\n```nu\n  ['nu', 'shell'] | str join '-'\n```\n"
     )]
     #[case::cell_path1("use.nu", (2, 3), "```\nlist<oneof<int, record<bar: int>>>\n```")]
     #[case::cell_path2("use.nu", (2, 7), "```\nrecord<bar: int>\n```")]
     #[case::cell_path3("use.nu", (2, 11), "```\nint\n```\n---\n2")]
+    #[case::cell_path4("use.nu", (4, 5), "```\nlist<record<b: list<int>>>\n```")]
+    #[case::cell_path5("use.nu", (4, 9), "```\nlist<int>\n```")]
+    #[case::cell_path6("use.nu", (4, 11), "```\nint\n```")]
     fn hover_single_request(
         #[case] filename: &str,
         #[case] cursor: (u32, u32),

@@ -255,7 +255,16 @@ If you create a custom command with this name, that will be used instead."#
                 }
             },
             PipelineData::Empty => {
-                command.stdin(Stdio::inherit());
+                // MCP servers run non-interactively - use null stdin to prevent commands
+                // from hanging when they prompt for passwords or other input.
+                // In the future, this may become a more general option (e.g., no_stdin)
+                // but needs more testing first. See:
+                // https://github.com/nushell/nushell/pull/17161#discussion_r2761243143
+                if engine_state.is_mcp {
+                    command.stdin(Stdio::null());
+                } else {
+                    command.stdin(Stdio::inherit());
+                }
                 None
             }
             value => {
@@ -281,7 +290,7 @@ If you create a custom command with this name, that will be used instead."#
 
         let mut child = child.map_err(|err| {
             let context = format!("Could not spawn foreground child: {err}");
-            IoError::new_internal(err, context, nu_protocol::location!())
+            IoError::new_internal(err, context)
         })?;
 
         if let Some(thread_job) = engine_state.current_thread_job()
@@ -291,7 +300,6 @@ If you create a custom command with this name, that will be used instead."#
                 ShellError::Io(IoError::new_internal(
                     err,
                     "Could not spawn external stdin worker",
-                    nu_protocol::location!(),
                 ))
             })?;
         }
@@ -319,7 +327,7 @@ If you create a custom command with this name, that will be used instead."#
         let child_pid = child.pid();
 
         // Wrap the output into a `PipelineData::byte_stream`.
-        let mut child = ChildProcess::new(
+        let child = ChildProcess::new(
             child,
             merged_stream,
             matches!(stderr, OutDest::Pipe),
@@ -334,12 +342,6 @@ If you create a custom command with this name, that will be used instead."#
                     .map(|it| it.to_string()),
             )),
         )?;
-
-        if matches!(stdout, OutDest::Pipe | OutDest::PipeSeparate)
-            || matches!(stderr, OutDest::Pipe | OutDest::PipeSeparate)
-        {
-            child.ignore_error(true);
-        }
 
         Ok(PipelineData::byte_stream(
             ByteStream::child(child, call.head),
@@ -494,13 +496,9 @@ fn write_pipeline_data(
     if let PipelineData::ByteStream(stream, ..) = data {
         stream.write_to(writer)?;
     } else if let PipelineData::Value(Value::Binary { val, .. }, ..) = data {
-        writer.write_all(&val).map_err(|err| {
-            IoError::new_internal(
-                err,
-                "Could not write pipeline data",
-                nu_protocol::location!(),
-            )
-        })?;
+        writer
+            .write_all(&val)
+            .map_err(|err| IoError::new_internal(err, "Could not write pipeline data"))?;
     } else {
         stack.start_collect_value();
 
@@ -514,13 +512,9 @@ fn write_pipeline_data(
         // Write the output.
         for value in output {
             let bytes = value.coerce_into_binary()?;
-            writer.write_all(&bytes).map_err(|err| {
-                IoError::new_internal(
-                    err,
-                    "Could not write pipeline data",
-                    nu_protocol::location!(),
-                )
-            })?;
+            writer
+                .write_all(&bytes)
+                .map_err(|err| IoError::new_internal(err, "Could not write pipeline data"))?;
         }
     }
     Ok(())

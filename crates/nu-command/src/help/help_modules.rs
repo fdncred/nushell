@@ -1,6 +1,7 @@
 use crate::filters::find_internal;
 use nu_engine::{command_prelude::*, scope::ScopeData};
 use nu_protocol::DeclId;
+use std::fmt::Write;
 
 #[derive(Clone)]
 pub struct HelpModules;
@@ -31,7 +32,7 @@ are also available in the current scope. Commands/aliases that were imported und
             .named(
                 "find",
                 SyntaxShape::String,
-                "string to find in module names and descriptions",
+                "String to find in module names and descriptions.",
                 Some('f'),
             )
             .input_output_types(vec![(Type::Nothing, Type::table())])
@@ -41,17 +42,17 @@ are also available in the current scope. Commands/aliases that were imported und
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "show all modules",
+                description: "Show all modules.",
                 example: "help modules",
                 result: None,
             },
             Example {
-                description: "show help for single module",
+                description: "Show help for single module.",
                 example: "help modules my-module",
                 result: None,
             },
             Example {
-                description: "search for string in module names and descriptions",
+                description: "Search for string in module names and descriptions.",
                 example: "help modules --find my-module",
                 result: None,
             },
@@ -131,7 +132,8 @@ pub fn help_modules(
             }
         }
 
-        long_desc.push_str(&format!("{G}Module{RESET}: {C}{name}{RESET}"));
+        write!(long_desc, "{G}Module{RESET}: {C}{name}{RESET}")
+            .expect("writing to a String is infallible");
         long_desc.push_str("\n\n");
 
         if !module.decls.is_empty() || module.main.is_some() {
@@ -168,7 +170,8 @@ pub fn help_modules(
                 .collect::<Vec<String>>()
                 .join(", ");
 
-            long_desc.push_str(&format!("{G}Exported commands{RESET}:\n  {commands_str}"));
+            write!(long_desc, "{G}Exported commands{RESET}:\n  {commands_str}")
+                .expect("writing to a String is infallible");
             long_desc.push_str("\n\n");
         }
 
@@ -206,16 +209,20 @@ pub fn help_modules(
                 .collect::<Vec<String>>()
                 .join(", ");
 
-            long_desc.push_str(&format!("{G}Exported aliases{RESET}:\n  {aliases_str}"));
+            write!(long_desc, "{G}Exported aliases{RESET}:\n  {aliases_str}")
+                .expect("writing to a String is infallible");
             long_desc.push_str("\n\n");
         }
 
         if module.env_block.is_some() {
-            long_desc.push_str(&format!("This module {C}exports{RESET} environment."));
+            write!(long_desc, "This module {C}exports{RESET} environment.")
+                .expect("writing to a String is infallible");
         } else {
-            long_desc.push_str(&format!(
+            write!(
+                long_desc,
                 "This module {C}does not export{RESET} environment."
-            ));
+            )
+            .expect("writing to a String is infallible");
         }
 
         let config = stack.get_config(engine_state);
@@ -237,9 +244,8 @@ fn build_help_modules(engine_state: &EngineState, stack: &Stack, span: Span) -> 
 #[cfg(test)]
 mod test {
     #[test]
-    fn test_examples() {
+    fn test_examples() -> nu_test_support::Result {
         use super::HelpModules;
-        use crate::test_examples;
-        test_examples(HelpModules {})
+        nu_test_support::test().examples(HelpModules)
     }
 }

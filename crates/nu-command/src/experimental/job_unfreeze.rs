@@ -68,12 +68,12 @@ impl Command for JobUnfreeze {
         vec![
             Example {
                 example: "job unfreeze",
-                description: "Unfreeze the latest frozen job",
+                description: "Unfreeze the latest frozen job.",
                 result: None,
             },
             Example {
                 example: "job unfreeze 4",
-                description: "Unfreeze a specific frozen job by its PID",
+                description: "Unfreeze a specific frozen job by its PID.",
                 result: None,
             },
         ]
@@ -95,7 +95,7 @@ fn unfreeze_job(
         Job::Thread(ThreadJob { .. }) => Err(JobError::CannotUnfreeze { span, id: old_id }.into()),
         Job::Frozen(FrozenJob {
             unfreeze: handle,
-            tag,
+            description,
         }) => {
             let pid = handle.pid();
 
@@ -106,7 +106,6 @@ fn unfreeze_job(
                     ShellError::Io(IoError::new_internal(
                         err,
                         "job was interrupted; could not kill foreground process",
-                        nu_protocol::location!(),
                     ))
                 })?;
             }
@@ -129,7 +128,7 @@ fn unfreeze_job(
                         old_id,
                         Job::Frozen(FrozenJob {
                             unfreeze: handle,
-                            tag,
+                            description,
                         }),
                     )
                     .expect("job was supposed to be removed");
@@ -145,7 +144,6 @@ fn unfreeze_job(
                 Err(err) => Err(ShellError::Io(IoError::new_internal(
                     err,
                     "Failed to unfreeze foreground process",
-                    nu_protocol::location!(),
                 ))),
             }
         }

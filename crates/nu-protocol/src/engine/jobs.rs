@@ -144,17 +144,17 @@ pub enum Job {
 pub struct ThreadJob {
     signals: Signals,
     pids: Arc<Mutex<HashSet<u32>>>,
-    tag: Option<String>,
+    description: Option<String>,
     pub sender: Sender<Mail>,
 }
 
 impl ThreadJob {
-    pub fn new(signals: Signals, tag: Option<String>, sender: Sender<Mail>) -> Self {
+    pub fn new(signals: Signals, description: Option<String>, sender: Sender<Mail>) -> Self {
         ThreadJob {
             signals,
             pids: Arc::new(Mutex::new(HashSet::default())),
             sender,
-            tag,
+            description,
         }
     }
 
@@ -212,24 +212,24 @@ impl Job {
         }
     }
 
-    pub fn tag(&self) -> Option<&String> {
+    pub fn description(&self) -> Option<&String> {
         match self {
-            Job::Thread(thread_job) => thread_job.tag.as_ref(),
-            Job::Frozen(frozen_job) => frozen_job.tag.as_ref(),
+            Job::Thread(thread_job) => thread_job.description.as_ref(),
+            Job::Frozen(frozen_job) => frozen_job.description.as_ref(),
         }
     }
 
-    pub fn assign_tag(&mut self, tag: Option<String>) {
+    pub fn assign_description(&mut self, description: Option<String>) {
         match self {
-            Job::Thread(thread_job) => thread_job.tag = tag,
-            Job::Frozen(frozen_job) => frozen_job.tag = tag,
+            Job::Thread(thread_job) => thread_job.description = description,
+            Job::Frozen(frozen_job) => frozen_job.description = description,
         }
     }
 }
 
 pub struct FrozenJob {
     pub unfreeze: UnfreezeHandle,
-    pub tag: Option<String>,
+    pub description: Option<String>,
 }
 
 impl FrozenJob {
@@ -265,7 +265,7 @@ pub struct CurrentJob {
 //
 // Messages are initially sent over a mpsc channel,
 // and may then be stored in a IgnoredMail struct when
-// filtered out by a tag.
+// filtered out by a message tag.
 pub struct Mailbox {
     receiver: Receiver<Mail>,
     ignored_mail: IgnoredMail,
@@ -292,7 +292,9 @@ impl Mailbox {
             let mut before = Instant::now();
 
             while waited_so_far < timeout {
-                let (tag, value) = self.receiver.recv_timeout(timeout - waited_so_far)?;
+                let (tag, value) = self
+                    .receiver
+                    .recv_timeout(timeout.checked_sub(waited_so_far).unwrap_or(Duration::ZERO))?;
 
                 if filter_tag.is_none() || filter_tag == tag {
                     return Ok(value);

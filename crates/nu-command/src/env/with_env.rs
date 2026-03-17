@@ -41,7 +41,7 @@ impl Command for WithEnv {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Set by key-value record",
+            description: "Set by key-value record.",
             example: r#"with-env {X: "Y", W: "Z"} { [$env.X $env.W] }"#,
             result: Some(Value::list(
                 vec![Value::test_string("Y"), Value::test_string("Z")],
@@ -84,9 +84,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(WithEnv {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(WithEnv)
     }
 }

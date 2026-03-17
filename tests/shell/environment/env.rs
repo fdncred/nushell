@@ -250,8 +250,8 @@ fn env_shlvl_commandstring_does_not_increment() {
 // We've also learned that `-e 'exit'` is not enough to
 // prevent failures entirely. For now we're going to ignore
 // these tests until we can find a better solution.
-#[ignore = "Causing hangs when both tests overlap"]
 #[test]
+#[serial]
 fn env_shlvl_in_repl() {
     let actual = nu!(r#"
         $env.SHLVL = 5
@@ -261,8 +261,8 @@ fn env_shlvl_in_repl() {
     assert!(actual.out.ends_with("SHLVL:6"));
 }
 
-#[ignore = "Causing hangs when both tests overlap"]
 #[test]
+#[serial]
 fn env_shlvl_in_exec_repl() {
     let actual = nu!(r#"
         $env.SHLVL = 29
@@ -299,4 +299,43 @@ fn path_is_a_list_in_script() {
 
         assert!(actual.out.ends_with("list<string>"));
     })
+}
+
+#[test]
+fn case_insensitive_env_load_env() {
+    let actual = nu!("
+        load-env {testvar: 'value1', TESTVAR: 'value2'}
+        print $env.testvar
+        print $env.TESTVAR
+    ");
+    // TESTVAR should override testvar due to case-insensitivity
+    assert!(actual.out.contains("value2"));
+    assert!(actual.out.contains("value2"));
+}
+
+#[test]
+fn case_insensitive_env_http_proxy() {
+    let actual = nu!("
+        $env.http_proxy = 'http://proxy.example.com'
+        $env.HTTP_PROXY
+    ");
+    assert_eq!(actual.out, "http://proxy.example.com");
+}
+
+#[test]
+fn case_insensitive_env_date_locale() {
+    let actual = nu!("
+        $env.lc_all = 'C'
+        $env.LC_ALL
+    ");
+    assert_eq!(actual.out, "C");
+}
+
+#[test]
+fn case_insensitive_env_record_access() {
+    let actual = nu!("
+        $env.test = 'value'
+        $env.TEST
+    ");
+    assert_eq!(actual.out, "value");
 }

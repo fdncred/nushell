@@ -47,7 +47,7 @@ impl Command for ExportModule {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Define a custom command in a submodule of a module and call it",
+            description: "Define a custom command in a submodule of a module and call it.",
             example: r#"module spam {
         export module eggs {
             export def foo [] { "foo" }
@@ -64,9 +64,7 @@ impl Command for ExportModule {
 mod test {
     use super::*;
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(ExportModule {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(ExportModule)
     }
 }

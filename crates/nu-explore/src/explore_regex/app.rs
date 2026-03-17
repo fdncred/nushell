@@ -2,12 +2,8 @@
 
 use crate::explore_regex::colors;
 use crate::explore_regex::quick_ref::{QuickRefEntry, get_flattened_entries};
+use edtui::{EditorMode, EditorState, Highlight, Index2, Lines, actions::InsertChar};
 use fancy_regex::Regex;
-use ratatui::{
-    style::Style,
-    text::{Line, Span, Text},
-};
-use tui_textarea::{CursorMove, TextArea};
 
 /// Which pane currently has input focus.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -19,50 +15,58 @@ pub enum InputFocus {
 }
 
 /// Main application state for the regex explorer.
-pub struct App<'a> {
+pub struct App {
+    /// Which input pane currently has focus (Regex, Sample, or QuickRef)
     pub input_focus: InputFocus,
-    pub regex_textarea: TextArea<'a>,
-    pub sample_textarea: TextArea<'a>,
+    /// Editor state for the regex pattern input (single-line)
+    pub regex_input: EditorState,
+    /// Editor state for the test string input (multi-line)
+    pub sample_text: EditorState,
+    /// Compiled regex pattern, if valid
     pub compiled_regex: Option<Regex>,
+    /// Error message from regex compilation, if invalid
     pub regex_error: Option<String>,
-    pub sample_scroll_v: u16,
-    pub sample_scroll_h: u16,
-    pub sample_view_height: u16,
+    /// Number of regex matches found in the sample text
     pub match_count: usize,
     // Quick reference panel state
+    /// Whether the quick reference panel is currently visible
     pub show_quick_ref: bool,
+    /// Whether the help modal is currently visible
+    pub show_help: bool,
+    /// Index of the currently selected quick reference entry
     pub quick_ref_selected: usize,
+    /// Vertical scroll position in the quick reference panel
     pub quick_ref_scroll: usize,
+    /// Horizontal scroll position in the quick reference panel
     pub quick_ref_scroll_h: u16,
+    /// Height of the quick reference viewport (updated each frame)
     pub quick_ref_view_height: usize,
+    /// Width of the quick reference viewport (updated each frame)
     pub quick_ref_view_width: u16,
+    /// Flattened list of all quick reference entries
     pub quick_ref_entries: Vec<QuickRefEntry>,
 }
 
-impl<'a> App<'a> {
+impl App {
     pub fn new(input_string: String) -> Self {
-        let mut regex_textarea = TextArea::default();
-        regex_textarea.set_cursor_line_style(Style::new());
+        let mut regex_input = EditorState::default();
+        regex_input.mode = EditorMode::Insert; // Enable modeless editing
 
-        let mut sample_textarea = TextArea::default();
-        sample_textarea.insert_str(&input_string);
-        sample_textarea.set_cursor_line_style(Style::new());
-        sample_textarea.move_cursor(CursorMove::Top);
+        let mut sample_text = EditorState::new(Lines::from(input_string.as_str()));
+        sample_text.mode = EditorMode::Insert; // Enable modeless editing
 
         let entries = get_flattened_entries();
         let initial_selected = Self::find_next_item(&entries, 0).unwrap_or(0);
 
         Self {
             input_focus: InputFocus::default(),
-            regex_textarea,
-            sample_textarea,
+            regex_input,
+            sample_text,
             compiled_regex: None,
             regex_error: None,
-            sample_scroll_v: 0,
-            sample_scroll_h: 0,
-            sample_view_height: 0,
             match_count: 0,
             show_quick_ref: false,
+            show_help: false,
             quick_ref_selected: initial_selected,
             quick_ref_scroll: 0,
             quick_ref_scroll_h: 0,
@@ -73,15 +77,11 @@ impl<'a> App<'a> {
     }
 
     pub fn get_sample_text(&self) -> String {
-        self.sample_textarea.lines().join("\n")
+        self.sample_text.lines.to_string()
     }
 
     pub fn get_regex_input(&self) -> String {
-        self.regex_textarea
-            .lines()
-            .first()
-            .cloned()
-            .unwrap_or_default()
+        self.regex_input.lines.to_string()
     }
 
     pub fn compile_regex(&mut self) {
@@ -89,15 +89,13 @@ impl<'a> App<'a> {
         self.regex_error = None;
         self.match_count = 0;
 
-        let Some(regex_input) = self.regex_textarea.lines().first() else {
-            return;
-        };
+        let regex_input = self.regex_input.lines.to_string();
 
         if regex_input.is_empty() {
             return;
         }
 
-        match Regex::new(regex_input) {
+        match Regex::new(&regex_input) {
             Ok(regex) => {
                 self.compiled_regex = Some(regex);
                 self.update_match_count();
@@ -117,66 +115,50 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Generate highlighted text with regex matches styled.
-    pub fn get_highlighted_text(&self) -> Text<'static> {
-        let sample_text = self.get_sample_text();
+    /// Generate edtui Highlights for regex matches.
+    pub fn get_highlights(&self) -> Vec<Highlight> {
+        let text = self.get_sample_text();
         let Some(regex) = &self.compiled_regex else {
-            return Text::from(sample_text);
+            return Vec::new();
         };
 
-        // Collect all match highlights: (start, end, style)
-        let mut highlights: Vec<(usize, usize, Style)> = regex
-            .captures_iter(&sample_text)
-            .flatten()
-            .flat_map(|capture| {
-                capture
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(group, submatch)| {
-                        submatch.map(|m| (m.start(), m.end(), colors::highlight_style(group)))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        // Build byte_offset -> (row, col) mapping for Unicode support
+        let mut byte_to_pos: Vec<(usize, usize)> = vec![(0, 0); text.len() + 1];
+        let (mut row, mut col) = (0, 0);
+        for (i, ch) in text.char_indices() {
+            for pos in byte_to_pos.iter_mut().skip(i).take(ch.len_utf8()) {
+                *pos = (row, col);
+            }
+            if ch == '\n' {
+                row += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        byte_to_pos[text.len()] = (row, col);
 
-        // Add fallback style for unhighlighted text (must be last after sort)
-        highlights.push((0, sample_text.len(), Style::new()));
-
-        // Sort by span size (smallest first) so inner groups take precedence
-        highlights.sort_by_key(|(start, end, _)| (*end - *start, *start));
-
-        // Collect all boundary points and deduplicate
-        let mut boundaries: Vec<usize> = highlights.iter().flat_map(|(s, e, _)| [*s, *e]).collect();
-        boundaries.sort();
-        boundaries.dedup();
-
-        // Build styled lines, handling newlines properly
-        let mut lines: Vec<Line> = Vec::new();
-        let mut current_line = Line::from("");
-
-        for window in boundaries.windows(2) {
-            let [start, end] = [window[0], window[1]];
-
-            // Find the first (smallest) highlight that contains this range
-            let Some((_, _, style)) = highlights.iter().find(|(s, e, _)| *s <= start && *e >= end)
-            else {
-                continue;
-            };
-
-            let fragment = &sample_text[start..end];
-            for (idx, part) in fragment.split('\n').enumerate() {
-                if idx > 0 {
-                    lines.push(current_line);
-                    current_line = Line::from("");
-                }
-                if !part.is_empty() {
-                    current_line.push_span(Span::styled(part.to_string(), *style));
-                }
+        let mut highlights = Vec::new();
+        for cap in regex.captures_iter(&text).flatten() {
+            for (group, m) in cap.iter().enumerate() {
+                let Some(m) = m else { continue };
+                let start = byte_to_pos[m.start()];
+                let end = byte_to_pos[m.end().saturating_sub(1)];
+                let size = m.end() - m.start();
+                highlights.push((
+                    size,
+                    Highlight::new(
+                        Index2::new(start.0, start.1),
+                        Index2::new(end.0, end.1),
+                        colors::highlight_style(group),
+                    ),
+                ));
             }
         }
 
-        lines.push(current_line);
-        Text::from(lines)
+        // Sort by span size (smallest first) so inner groups render last and take precedence
+        highlights.sort_by_key(|(size, _)| *size);
+        highlights.into_iter().map(|(_, h)| h).collect()
     }
 
     // ─── Quick Reference Panel ───────────────────────────────────────────
@@ -195,6 +177,11 @@ impl<'a> App<'a> {
     pub fn close_quick_ref(&mut self) {
         self.show_quick_ref = false;
         self.input_focus = InputFocus::Regex;
+    }
+
+    /// Toggle the help modal visibility.
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
     }
 
     /// Move selection up in the quick reference list.
@@ -234,7 +221,10 @@ impl<'a> App<'a> {
     pub fn insert_selected_quick_ref(&mut self) {
         if let Some(QuickRefEntry::Item(item)) = self.quick_ref_entries.get(self.quick_ref_selected)
         {
-            self.regex_textarea.insert_str(item.insert);
+            // Insert each character of the item at the cursor position
+            for ch in item.insert.chars() {
+                self.regex_input.execute(InsertChar(ch));
+            }
             self.compile_regex();
         }
     }
@@ -696,25 +686,105 @@ mod tests {
     #[test]
     fn test_compile_regex_with_unicode_pattern() {
         let mut app = App::new(String::new());
-        app.regex_textarea = TextArea::new(vec!["\\p{L}+".to_string()]);
+        app.regex_input = EditorState::new(Lines::from("\\p{L}+"));
         app.compile_regex();
         assert!(app.compiled_regex.is_some());
         assert!(app.regex_error.is_none());
     }
 
+    // ─── get_highlights tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_highlights_no_regex() {
+        let app = App::new("hello world".to_string());
+        let highlights = app.get_highlights();
+        assert!(highlights.is_empty());
+    }
+
+    #[test]
+    fn test_get_highlights_no_matches() {
+        let mut app = App::new("hello world".to_string());
+        app.regex_input = EditorState::new(Lines::from("xyz"));
+        app.compile_regex();
+        let highlights = app.get_highlights();
+        assert!(highlights.is_empty());
+    }
+
+    #[test]
+    fn test_get_highlights_single_match() {
+        let mut app = App::new("hello world".to_string());
+        app.regex_input = EditorState::new(Lines::from("world"));
+        app.compile_regex();
+        let highlights = app.get_highlights();
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, Index2::new(0, 6));
+        assert_eq!(highlights[0].end, Index2::new(0, 10));
+    }
+
+    #[test]
+    fn test_get_highlights_multiple_matches() {
+        let mut app = App::new("cat dog cat".to_string());
+        app.regex_input = EditorState::new(Lines::from("cat"));
+        app.compile_regex();
+        let highlights = app.get_highlights();
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0].start, Index2::new(0, 0));
+        assert_eq!(highlights[0].end, Index2::new(0, 2));
+        assert_eq!(highlights[1].start, Index2::new(0, 8));
+        assert_eq!(highlights[1].end, Index2::new(0, 10));
+    }
+
+    #[test]
+    fn test_get_highlights_multiline() {
+        let mut app = App::new("hello\nworld".to_string());
+        app.regex_input = EditorState::new(Lines::from("world"));
+        app.compile_regex();
+        let highlights = app.get_highlights();
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, Index2::new(1, 0));
+        assert_eq!(highlights[0].end, Index2::new(1, 4));
+    }
+
+    #[test]
+    fn test_get_highlights_capture_groups() {
+        let mut app = App::new("hello world".to_string());
+        app.regex_input = EditorState::new(Lines::from("(hello) (world)"));
+        app.compile_regex();
+        let highlights = app.get_highlights();
+        // Group 0 (full match) + Group 1 (hello) + Group 2 (world)
+        assert_eq!(highlights.len(), 3);
+        // Verify styles match expected group colors
+        assert_eq!(highlights[0].style, colors::highlight_style(1));
+        assert_eq!(highlights[1].style, colors::highlight_style(2));
+        assert_eq!(highlights[2].style, colors::highlight_style(0));
+    }
+
+    #[test]
+    fn test_get_highlights_unicode() {
+        let mut app = App::new("日本語テスト".to_string());
+        app.regex_input = EditorState::new(Lines::from("テスト"));
+        app.compile_regex();
+        let highlights = app.get_highlights();
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, Index2::new(0, 3));
+        assert_eq!(highlights[0].end, Index2::new(0, 5));
+    }
+
     #[test]
     fn test_get_highlighted_text_with_unicode_sample() {
         let mut app = App::new("12345abcde項目".to_string());
-        app.regex_textarea = TextArea::new(vec!["\\w+".to_string()]);
+        app.regex_input = EditorState::new(Lines::from("\\w+"));
         app.compile_regex();
-        let highlighted = app.get_highlighted_text();
-        // Should not panic and should produce some text
-        assert!(!highlighted.lines.is_empty());
+        let highlights = app.get_highlights();
+        // \w+ matches the entire string as one word
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].start, Index2::new(0, 0));
+        assert_eq!(highlights[0].end, Index2::new(0, 11));
     }
 
     // ─── Helper ──────────────────────────────────────────────────────────────
 
-    fn create_test_app() -> App<'static> {
+    fn create_test_app() -> App {
         let mut app = App::new(String::new());
         app.quick_ref_entries = test_entries();
         app.quick_ref_selected = 1; // Default to first item

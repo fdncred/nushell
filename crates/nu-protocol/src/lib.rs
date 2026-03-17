@@ -1,5 +1,13 @@
-#![cfg_attr(not(feature = "os"), allow(unused))]
 #![doc = include_str!("../README.md")]
+#![cfg_attr(not(feature = "os"), allow(unused))]
+#![cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(
+        clippy::disallowed_types,
+        reason = "This file may be compiled as host build-script code while building the wasm target"
+    )
+)]
+
 mod alias;
 pub mod ast;
 pub mod casing;
@@ -51,3 +59,10 @@ pub use ty::*;
 pub use value::*;
 
 pub use nu_derive_value::*;
+
+#[cfg(test)]
+#[macro_use]
+extern crate nu_test_support;
+
+#[cfg(test)]
+use nu_test_support::harness::main;

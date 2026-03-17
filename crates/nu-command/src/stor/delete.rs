@@ -1,6 +1,7 @@
 use crate::database::{MEMORY_DB, SQLiteDatabase};
 use nu_engine::command_prelude::*;
 use nu_protocol::Signals;
+use std::fmt::Write;
 
 #[derive(Clone)]
 pub struct StorDelete;
@@ -16,13 +17,13 @@ impl Command for StorDelete {
             .required_named(
                 "table-name",
                 SyntaxShape::String,
-                "name of the table you want to delete or delete from",
+                "Name of the table you want to delete or delete from.",
                 Some('t'),
             )
             .named(
                 "where-clause",
                 SyntaxShape::String,
-                "a sql string to use as a where clause without the WHERE keyword",
+                "A sql string to use as a where clause without the WHERE keyword.",
                 Some('w'),
             )
             .allow_variants_without_examples(true)
@@ -102,7 +103,8 @@ impl Command for StorDelete {
                     // Yup, this is a bit janky, but I'm not sure a better way to do this without having
                     // --and and --or flags as well as supporting ==, !=, <>, is null, is not null, etc.
                     // and other sql syntax. So, for now, just type a sql where clause as a string.
-                    delete_stmt.push_str(&format!("WHERE {where_clause}"));
+                    write!(delete_stmt, "WHERE {where_clause}")
+                        .expect("writing to a String is infallible");
                     delete_stmt
                 }
             };
@@ -128,9 +130,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StorDelete {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StorDelete)
     }
 }

@@ -95,6 +95,7 @@ impl Command for Chunks {
         call: &Call,
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
+        let input = input.into_stream_or_original(engine_state);
         let head = call.head;
         let chunk_size: Value = call.req(engine_state, stack, 0)?;
 
@@ -265,9 +266,7 @@ mod test {
     }
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(Chunks {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(Chunks)
     }
 }

@@ -16,7 +16,7 @@ impl Command for Rotate {
                 (Type::list(Type::Any), Type::table()),
                 (Type::String, Type::table()),
             ])
-            .switch("ccw", "rotate counter clockwise", None)
+            .switch("ccw", "Rotate counter clockwise.", None)
             .rest(
                 "rest",
                 SyntaxShape::String,
@@ -282,9 +282,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(Rotate)
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(Rotate)
     }
 }

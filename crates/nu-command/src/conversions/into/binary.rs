@@ -35,12 +35,13 @@ impl Command for IntoBinary {
                 (Type::record(), Type::record()),
             ])
             .allow_variants_without_examples(true) // TODO: supply exhaustive examples
-            .switch("compact", "output without padding zeros", Some('c'))
-            .named(
-                "endian",
-                SyntaxShape::String,
-                "byte encode endian. Does not affect string, date or binary. In containers, only individual elements are affected. Available options: native(default), little, big",
-                Some('e'),
+            .switch("compact", "Output without padding zeros.", Some('c'))
+            .param(
+                Flag::new("endian")
+                    .short('e')
+                    .arg(SyntaxShape::String)
+                    .desc("Byte encode endian. Does not affect string, date or binary. In containers, only individual elements are affected. Available options: native(default), little, big.")
+                    .completion(Completion::new_list(&["native", "little", "big"])),
             )
             .rest(
                 "rest",
@@ -71,7 +72,7 @@ impl Command for IntoBinary {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "convert string to a nushell binary primitive",
+                description: "convert string to a nushell binary primitive.",
                 example: "'This is a string that is exactly 52 characters long.' | into binary",
                 result: Some(Value::binary(
                     "This is a string that is exactly 52 characters long."
@@ -82,7 +83,7 @@ impl Command for IntoBinary {
                 )),
             },
             Example {
-                description: "convert a number to a nushell binary primitive",
+                description: "convert a number to a nushell binary primitive.",
                 example: "1 | into binary",
                 result: Some(Value::binary(
                     i64::from(1).to_ne_bytes().to_vec(),
@@ -90,7 +91,7 @@ impl Command for IntoBinary {
                 )),
             },
             Example {
-                description: "convert a number to a nushell binary primitive (big endian)",
+                description: "convert a number to a nushell binary primitive (big endian).",
                 example: "258 | into binary --endian big",
                 result: Some(Value::binary(
                     i64::from(258).to_be_bytes().to_vec(),
@@ -98,7 +99,7 @@ impl Command for IntoBinary {
                 )),
             },
             Example {
-                description: "convert a number to a nushell binary primitive (little endian)",
+                description: "convert a number to a nushell binary primitive (little endian).",
                 example: "258 | into binary --endian little",
                 result: Some(Value::binary(
                     i64::from(258).to_le_bytes().to_vec(),
@@ -106,7 +107,7 @@ impl Command for IntoBinary {
                 )),
             },
             Example {
-                description: "convert a boolean to a nushell binary primitive",
+                description: "convert a boolean to a nushell binary primitive.",
                 example: "true | into binary",
                 result: Some(Value::binary(
                     i64::from(1).to_ne_bytes().to_vec(),
@@ -114,17 +115,17 @@ impl Command for IntoBinary {
                 )),
             },
             Example {
-                description: "convert a filesize to a nushell binary primitive",
+                description: "convert a filesize to a nushell binary primitive.",
                 example: "ls | where name == LICENSE | get size | into binary",
                 result: None,
             },
             Example {
-                description: "convert a filepath to a nushell binary primitive",
+                description: "convert a filepath to a nushell binary primitive.",
                 example: "ls | where name == LICENSE | get name | path expand | into binary",
                 result: None,
             },
             Example {
-                description: "convert a float to a nushell binary primitive",
+                description: "convert a float to a nushell binary primitive.",
                 example: "1.234 | into binary",
                 result: Some(Value::binary(
                     1.234f64.to_ne_bytes().to_vec(),
@@ -132,7 +133,7 @@ impl Command for IntoBinary {
                 )),
             },
             Example {
-                description: "convert an int to a nushell binary primitive with compact enabled",
+                description: "convert an int to a nushell binary primitive with compact enabled.",
                 example: "10 | into binary --compact",
                 result: Some(Value::binary(vec![10], Span::test_data())),
             },
@@ -286,10 +287,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(IntoBinary {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(IntoBinary)
     }
 
     #[rstest]

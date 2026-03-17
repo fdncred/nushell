@@ -289,7 +289,7 @@ fn evaluate_source(
         let mut working_set = StateWorkingSet::new(engine_state);
         let output = parse(
             &mut working_set,
-            Some(fname), // format!("entry #{}", entry_num)
+            Some(fname), // format!("repl_entry #{}", entry_num)
             source,
             false,
         );
@@ -318,6 +318,16 @@ fn evaluate_source(
         eval_block::<WithoutDebug>(engine_state, stack, &block, input)
     }?;
     let pipeline_data = pipeline.body;
+
+    // Update engine_state with deleted variables
+    for var_id in &stack.deletions {
+        if let Some(active_id) = engine_state.scope.active_overlays.last()
+            && let Some((_, overlay)) = engine_state.scope.overlays.get_mut((*active_id).get())
+        {
+            overlay.vars.retain(|_, v| *v != *var_id);
+        }
+    }
+    stack.deletions.clear();
 
     let no_newline = matches!(&pipeline_data, &PipelineData::ByteStream(..));
     print_pipeline(engine_state, stack, pipeline_data, no_newline)?;

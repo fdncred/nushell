@@ -52,7 +52,7 @@ impl Command for Whoami {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Get the current username",
+            description: "Get the current username.",
             example: "whoami",
             result: None,
         }]
@@ -64,8 +64,7 @@ mod tests {
     use super::Whoami;
 
     #[test]
-    fn examples_work_as_expected() {
-        use crate::test_examples;
-        test_examples(Whoami {})
+    fn examples_work_as_expected() -> nu_test_support::Result {
+        nu_test_support::test().examples(Whoami)
     }
 }

@@ -24,7 +24,7 @@ impl Command for UpdateCells {
             .named(
                 "columns",
                 SyntaxShape::List(Box::new(SyntaxShape::Any)),
-                "list of columns to update",
+                "List of columns to update.",
                 Some('c'),
             )
             .category(Category::Filters)
@@ -196,9 +196,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(UpdateCells {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(UpdateCells)
     }
 }

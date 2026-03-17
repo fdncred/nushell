@@ -11,17 +11,16 @@ mod terminal;
 mod test_bins;
 
 use crate::{
-    command::parse_commandline_args,
+    command::parse_cli_args_from_env,
     config_files::set_config_path,
     logger::{configure, logger},
 };
-use command::gather_commandline_args;
 use log::{Level, trace};
 use miette::Result;
 use nu_cli::gather_parent_env_vars;
 use nu_engine::{convert_env_values, exit::cleanup_exit};
 use nu_lsp::LanguageServer;
-use nu_path::canonicalize_with;
+use nu_path::absolute_with;
 use nu_protocol::{
     ByteStream, Config, IntoValue, PipelineData, ShellError, Span, Spanned, Type, Value,
     engine::{EngineState, Stack},
@@ -31,7 +30,12 @@ use nu_std::load_standard_library;
 use nu_utils::perf;
 use run::{run_commands, run_file, run_repl};
 use signals::ctrlc_protection;
-use std::{borrow::Cow, path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    borrow::Cow,
+    path::{PathBuf, absolute},
+    str::FromStr,
+    sync::Arc,
+};
 
 /// Get the directory where the Nushell executable is located.
 fn current_exe_directory() -> PathBuf {
@@ -42,16 +46,29 @@ fn current_exe_directory() -> PathBuf {
 
 /// Get the current working directory from the environment.
 fn current_dir_from_environment() -> PathBuf {
-    if let Ok(cwd) = std::env::current_dir() {
-        return cwd;
+    let cwd = std::env::current_dir();
+    let pwd = std::env::var("PWD");
+    match (cwd, pwd) {
+        // If current_dir and PWD are the same then use PWD
+        // so the path isn't unnecessarily canonicalized on Unix systems.
+        (Ok(cwd), Ok(pwd)) => {
+            if matches!(same_file::is_same_file(&cwd, &pwd), Ok(true)) {
+                pwd.into()
+            } else {
+                cwd
+            }
+        }
+        // Otherwise prefer current_dir in case it has diverged from PWD
+        (Ok(cwd), _) => cwd,
+        (_, Ok(pwd)) => pwd.into(),
+        _ => {
+            if let Some(home) = nu_path::home_dir() {
+                home.into_std_path_buf()
+            } else {
+                current_exe_directory()
+            }
+        }
     }
-    if let Ok(cwd) = std::env::var("PWD") {
-        return cwd.into();
-    }
-    if let Some(home) = nu_path::home_dir() {
-        return home.into_std_path_buf();
-    }
-    current_exe_directory()
 }
 
 fn main() -> Result<()> {
@@ -64,16 +81,17 @@ fn main() -> Result<()> {
         miette_hook(x);
     }));
 
-    let mut engine_state = EngineState::new();
+    let engine_state = EngineState::new();
 
     // Parse commandline args very early and load experimental options to allow loading different
     // commands based on experimental options.
-    let (args_to_nushell, script_name, args_to_script) = gather_commandline_args();
-    let parsed_nu_cli_args = parse_commandline_args(&args_to_nushell.join(" "), &mut engine_state)
-        .unwrap_or_else(|err| {
-            report_shell_error(None, &engine_state, &err);
-            std::process::exit(1)
-        });
+    let parsed = parse_cli_args_from_env().unwrap_or_else(|err| {
+        report_shell_error(None, &engine_state, &err.into());
+        std::process::exit(1)
+    });
+    let parsed_nu_cli_args = parsed.nu;
+    let script_name = parsed.script_name;
+    let args_to_script = parsed.args_to_script;
 
     experimental_options::load(&engine_state, &parsed_nu_cli_args, !script_name.is_empty());
 
@@ -120,7 +138,7 @@ fn main() -> Result<()> {
         && !xdg_config_home.is_empty()
     {
         if nushell_config_path
-            != canonicalize_with(&xdg_config_home, &init_cwd)
+            != absolute_with(&xdg_config_home, &init_cwd)
                 .unwrap_or(PathBuf::from(&xdg_config_home))
                 .join("nushell")
         {
@@ -133,7 +151,7 @@ fn main() -> Result<()> {
                 },
             );
         } else if let Some(old_config) = dirs::config_dir()
-            .and_then(|p| p.canonicalize().ok())
+            .and_then(|p| absolute(p).ok())
             .map(|p| p.join("nushell"))
         {
             let xdg_config_empty = nushell_config_path
@@ -165,25 +183,9 @@ fn main() -> Result<()> {
 
     let mut default_nu_lib_dirs_path = nushell_config_path.clone();
     default_nu_lib_dirs_path.push("scripts");
-    // env.NU_LIB_DIRS to be replaced by constant (below) - Eventual deprecation
-    // but an empty list for now to allow older code to work
-    engine_state.add_env_var("NU_LIB_DIRS".to_string(), Value::test_list(vec![]));
 
-    let mut working_set = nu_protocol::engine::StateWorkingSet::new(&engine_state);
-    let var_id = working_set.add_variable(
-        b"$NU_LIB_DIRS".into(),
-        Span::unknown(),
-        Type::List(Box::new(Type::String)),
-        false,
-    );
-    working_set.set_variable_const_val(
-        var_id,
-        Value::test_list(vec![
-            Value::test_string(default_nu_lib_dirs_path.to_string_lossy()),
-            Value::test_string(default_nushell_completions_path.to_string_lossy()),
-        ]),
-    );
-    engine_state.merge_delta(working_set.render())?;
+    // Parse include paths from -I flag
+    let include_paths = &parsed_nu_cli_args.include_path;
 
     let mut default_nu_plugin_dirs_path = nushell_config_path;
     default_nu_plugin_dirs_path.push("plugins");
@@ -232,11 +234,35 @@ fn main() -> Result<()> {
         .get(&engine_state);
 
     // Set up logger
-    if let Some(level) = parsed_nu_cli_args
+    let level_opt = parsed_nu_cli_args
         .log_level
         .as_ref()
-        .map(|level| level.item.clone())
-    {
+        .map(|level| level.item.clone());
+    let target_opt = parsed_nu_cli_args
+        .log_target
+        .as_ref()
+        .map(|target| target.item.clone());
+    let file_opt = parsed_nu_cli_args.log_file.as_ref().map(|f| f.item.clone());
+
+    // Preliminary validation of combinations that should fail regardless of
+    // whether a log level is provided.
+    if file_opt.is_some() && target_opt.as_deref() != Some("file") {
+        eprintln!("ERROR: --log-file requires --log-target file");
+        std::process::exit(1);
+    }
+
+    if target_opt.as_deref() == Some("file") && file_opt.is_none() {
+        eprintln!("ERROR: --log-target file requires --log-file");
+        std::process::exit(1);
+    }
+
+    // Enforce that when logging to a file with a custom path, the user must also specify a log level.
+    if target_opt.as_deref() == Some("file") && file_opt.is_some() && level_opt.is_none() {
+        eprintln!("ERROR: --log-target file with --log-file requires --log-level");
+        std::process::exit(1);
+    }
+
+    if let Some(level) = level_opt {
         let level = if Level::from_str(&level).is_ok() {
             level
         } else {
@@ -245,11 +271,7 @@ fn main() -> Result<()> {
             );
             "info".to_string()
         };
-        let target = parsed_nu_cli_args
-            .log_target
-            .as_ref()
-            .map(|target| target.item.clone())
-            .unwrap_or_else(|| "stderr".to_string());
+        let target = target_opt.unwrap_or_else(|| "stderr".to_string());
 
         let make_filters = |filters: &Option<Vec<Spanned<String>>>| {
             filters.as_ref().map(|filters| {
@@ -264,7 +286,8 @@ fn main() -> Result<()> {
             exclude: make_filters(&parsed_nu_cli_args.log_exclude),
         };
 
-        logger(|builder| configure(&level, &target, filters, builder))?;
+        // logger now expects the closure to return a `Result` so that we can surface configuration errors such as missing `--log-file` when the target is `file`.
+        logger(|builder| configure(&level, &target, file_opt.as_deref(), filters, builder))?;
         // info!("start logging {}:{}:{}", file!(), line!(), column!());
         perf!("start logging", start_time, use_color);
     }
@@ -307,27 +330,6 @@ fn main() -> Result<()> {
     );
 
     start_time = std::time::Instant::now();
-    if let Some(include_path) = &parsed_nu_cli_args.include_path {
-        let span = include_path.span;
-        let vals: Vec<_> = include_path
-            .item
-            .split('\x1e') // \x1e is the record separator character (a character that is unlikely to appear in a path)
-            .map(|x| Value::string(x.trim().to_string(), span))
-            .collect();
-
-        let mut working_set = nu_protocol::engine::StateWorkingSet::new(&engine_state);
-        let var_id = working_set.add_variable(
-            b"$NU_LIB_DIRS".into(),
-            span,
-            Type::List(Box::new(Type::String)),
-            false,
-        );
-        working_set.set_variable_const_val(var_id, Value::list(vals, span));
-        engine_state.merge_delta(working_set.render())?;
-    }
-    perf!("NU_LIB_DIRS setup", start_time, use_color);
-
-    start_time = std::time::Instant::now();
     // First, set up env vars as strings only
     gather_parent_env_vars(&mut engine_state, init_cwd.as_ref());
     perf!("gather env vars", start_time, use_color);
@@ -341,6 +343,78 @@ fn main() -> Result<()> {
         report_shell_error(None, &engine_state, &e);
     }
     perf!("Convert path to list", start_time, use_color);
+
+    // Set up NU_LIB_DIRS: constant = defaults + env + -I, env = env + -I
+    start_time = std::time::Instant::now();
+    {
+        /// Parse a string into a list of paths, splitting on the given separators.
+        fn parse_path_list(value: &str, separators: &[char]) -> Vec<String> {
+            value
+                .split(|c| separators.contains(&c))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+
+        // Get user-set paths from NU_LIB_DIRS env var (after conversion to Values)
+        let mut user_lib_dirs: Vec<String> =
+            if let Some(val) = engine_state.get_env_var("NU_LIB_DIRS") {
+                match val {
+                    Value::List { vals, .. } => vals
+                        .iter()
+                        .filter_map(|v| v.as_str().ok())
+                        .map(|s| s.to_string())
+                        .collect(),
+                    Value::String { val, .. } => {
+                        // Split on platform-specific path separators
+                        parse_path_list(val, if cfg!(windows) { &[';'] } else { &[':'] })
+                    }
+                    _ => vec![],
+                }
+            } else {
+                vec![]
+            };
+
+        // Append paths from -I flag, which can contain multiple paths separated by :, ;, or \x1e for backwards compatibility
+        if let Some(spanned) = include_paths {
+            let paths = parse_path_list(&spanned.item, &[':', ';', '\x1e']);
+            user_lib_dirs.extend(paths);
+        }
+
+        // Combine default paths with user-set paths
+        let default_paths = vec![
+            default_nu_lib_dirs_path.to_string_lossy().to_string(),
+            default_nushell_completions_path
+                .to_string_lossy()
+                .to_string(),
+        ];
+        let all_lib_dirs: Vec<String> = user_lib_dirs.into_iter().chain(default_paths).collect();
+
+        // Convert to Value list for setting env vars and constants
+        let all_lib_dir_values: Vec<Value> = all_lib_dirs
+            .iter()
+            .map(|s| Value::string(s.clone(), Span::unknown()))
+            .collect();
+
+        // Set $env.NU_LIB_DIRS to the full list (defaults + user-set)
+        engine_state.add_env_var(
+            "NU_LIB_DIRS".to_string(),
+            Value::list(all_lib_dir_values.clone(), Span::unknown()),
+        );
+
+        // Set $NU_LIB_DIRS as a constant with the same full list
+        let mut working_set = nu_protocol::engine::StateWorkingSet::new(&engine_state);
+        let var_id = working_set.add_variable(
+            b"$NU_LIB_DIRS".into(),
+            Span::unknown(),
+            Type::List(Box::new(Type::String)),
+            false, // is_mutable
+        );
+        working_set
+            .set_variable_const_val(var_id, Value::list(all_lib_dir_values, Span::unknown()));
+        engine_state.merge_delta(working_set.render())?;
+    }
+    perf!("$env.NU_LIB_DIRS/$NU_LIB_DIRS setup", start_time, use_color);
 
     engine_state.add_env_var(
         "NU_VERSION".to_string(),
@@ -427,12 +501,12 @@ fn main() -> Result<()> {
 
         let mut working_set = StateWorkingSet::new(&engine_state);
         for plugin_filename in plugins {
-            // Make sure the plugin filenames are canonicalized
-            let filename = canonicalize_with(&plugin_filename.item, &init_cwd)
+            // Make sure the plugin filenames are absolute
+            let filename = absolute_with(&plugin_filename.item, &init_cwd)
                 .map_err(|err| {
-                    nu_protocol::shell_error::io::IoError::new(
+                    nu_protocol::shell_error::io::IoError::new_internal_with_path(
                         err,
-                        plugin_filename.span,
+                        "Could not resolve plugin path",
                         PathBuf::from(&plugin_filename.item),
                     )
                 })
@@ -479,7 +553,18 @@ fn main() -> Result<()> {
                 parsed_nu_cli_args.login_shell.is_some(),
             );
         }
-        nu_mcp::initialize_mcp_server(engine_state)?;
+        let transport = match parsed_nu_cli_args
+            .mcp_transport
+            .as_ref()
+            .map(|value| value.item.as_str())
+        {
+            Some("http") => {
+                let port = parsed_nu_cli_args.mcp_port.unwrap_or(8080);
+                nu_mcp::McpTransport::Http { port }
+            }
+            _ => nu_mcp::McpTransport::Stdio,
+        };
+        nu_mcp::initialize_mcp_server(engine_state, transport)?;
         return Ok(());
     }
 

@@ -74,7 +74,7 @@ impl Command for MathAbs {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Compute absolute value of each number in a list of numbers",
+            description: "Compute absolute value of each number in a list of numbers.",
             example: "[-50 -100.0 25] | math abs",
             result: Some(Value::list(
                 vec![
@@ -112,9 +112,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(MathAbs {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(MathAbs)
     }
 }

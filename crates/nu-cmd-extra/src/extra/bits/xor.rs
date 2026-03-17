@@ -32,7 +32,7 @@ impl Command for BitsXor {
             .named(
                 "endian",
                 SyntaxShape::String,
-                "byte encode endian, available options: native(default), little, big",
+                "Byte encode endian, available options: native(default), little, big.",
                 Some('e'),
             )
             .category(Category::Bits)
@@ -124,9 +124,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(BitsXor {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(BitsXor)
     }
 }

@@ -1,3 +1,4 @@
+#![allow(unused_assignments)]
 use super::chained_error::ChainedError;
 use crate::{
     ConfigError, FromValue, LabeledError, ParseError, Span, Spanned, Type, Value,
@@ -14,7 +15,6 @@ use thiserror::Error;
 pub mod bridge;
 pub mod io;
 pub mod job;
-pub mod location;
 pub mod network;
 
 /// The fundamental error type for the evaluation engine. These cases represent different kinds of errors
@@ -1149,6 +1149,16 @@ pub enum ShellError {
         span: Span,
         value: Box<Value>,
     },
+
+    /// Exit event, it can still be caught by `try {..} finally {..}` block.
+    #[error("Exit doesn't catch internally")]
+    #[diagnostic(
+        code(nu::shell::exit),
+        help(
+            "This shouldn't happen. Please file an issue: https://github.com/nushell/nushell/issues"
+        )
+    )]
+    Exit { code: i32 },
 
     /// The code being executed called itself too many times.
     ///

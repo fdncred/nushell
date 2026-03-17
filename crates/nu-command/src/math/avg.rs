@@ -64,17 +64,17 @@ impl Command for MathAvg {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Compute the average of a list of numbers",
+                description: "Compute the average of a list of numbers.",
                 example: "[-50 100.0 25] | math avg",
                 result: Some(Value::test_float(25.0)),
             },
             Example {
-                description: "Compute the average of a list of durations",
+                description: "Compute the average of a list of durations.",
                 example: "[2sec 1min] | math avg",
                 result: Some(Value::test_duration(31 * NS_PER_SEC)),
             },
             Example {
-                description: "Compute the average of each column in a table",
+                description: "Compute the average of each column in a table.",
                 example: "[[a b]; [1 2] [3 4]] | math avg",
                 result: Some(Value::test_record(record! {
                     "a" => Value::test_int(2),
@@ -101,9 +101,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(MathAvg {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(MathAvg)
     }
 }

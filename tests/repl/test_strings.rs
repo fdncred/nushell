@@ -39,7 +39,9 @@ fn non_string_in_record() -> TestResult {
 #[test]
 fn unbalance_string() -> TestResult {
     fail_test(r#""aaaab"cc"#, "invalid characters")?;
-    fail_test(r#"'aaaab'cc"#, "invalid characters")
+    fail_test(r#"'aaaab'cc"#, "invalid characters")?;
+    fail_test(r#"$"aaaab"cc"#, "invalid characters")?;
+    fail_test(r#"$'aaaab'cc"#, "invalid characters")
 }
 
 #[test]
@@ -55,6 +57,11 @@ fn string_in_valuestream() -> TestResult {
 #[test]
 fn single_tick_interpolation() -> TestResult {
     run_test(r#"$'(3 + 4)'"#, "7")
+}
+
+#[test]
+fn unclosed_interpolation_subexpression() -> TestResult {
+    fail_test("$\"foo (2 + 3\"", "unclosed )")
 }
 
 #[test]

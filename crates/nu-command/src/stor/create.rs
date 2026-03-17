@@ -1,5 +1,6 @@
 use crate::database::{MEMORY_DB, SQLiteDatabase};
 use nu_engine::command_prelude::*;
+use std::fmt::Write;
 
 #[derive(Clone)]
 pub struct StorCreate;
@@ -15,13 +16,13 @@ impl Command for StorCreate {
             .required_named(
                 "table-name",
                 SyntaxShape::String,
-                "name of the table you want to create",
+                "Name of the table you want to create.",
                 Some('t'),
             )
             .required_named(
                 "columns",
                 SyntaxShape::Record(vec![]),
-                "a record of column names and datatypes",
+                "A record of column names and datatypes.",
                 Some('c'),
             )
             .allow_variants_without_examples(true)
@@ -92,28 +93,36 @@ fn process(
                 for (column_name, column_datatype) in record {
                     match column_datatype.coerce_str()?.to_lowercase().as_ref() {
                         "int" => {
-                            create_stmt.push_str(&format!("{column_name} INTEGER, "));
+                            write!(create_stmt, "{column_name} INTEGER, ")
+                                .expect("writing to a String is infallible");
                         }
                         "float" => {
-                            create_stmt.push_str(&format!("{column_name} REAL, "));
+                            write!(create_stmt, "{column_name} REAL, ")
+                                .expect("writing to a String is infallible");
                         }
                         "str" => {
-                            create_stmt.push_str(&format!("{column_name} VARCHAR(255), "));
+                            write!(create_stmt, "{column_name} VARCHAR(255), ")
+                                .expect("writing to a String is infallible");
                         }
 
                         "bool" => {
-                            create_stmt.push_str(&format!("{column_name} BOOLEAN, "));
+                            write!(create_stmt, "{column_name} BOOLEAN, ")
+                                .expect("writing to a String is infallible");
                         }
                         "datetime" => {
-                            create_stmt.push_str(&format!(
+                            write!(
+                                create_stmt,
                                 "{column_name} DATETIME DEFAULT(STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')), "
-                            ));
+                            )
+                            .expect("writing to a String is infallible");
                         }
                         "json" => {
-                            create_stmt.push_str(&format!("{column_name} JSON, "));
+                            write!(create_stmt, "{column_name} JSON, ")
+                                .expect("writing to a String is infallible");
                         }
                         "jsonb" => {
-                            create_stmt.push_str(&format!("{column_name} JSONB, "));
+                            write!(create_stmt, "{column_name} JSONB, ")
+                                .expect("writing to a String is infallible");
                         }
 
                         _ => {
@@ -161,10 +170,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StorCreate {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StorCreate)
     }
 
     #[test]

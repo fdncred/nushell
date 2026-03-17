@@ -54,12 +54,12 @@ impl Command for UrlDecode {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Decode a url with escape characters",
+                description: "Decode a URL with escape characters.",
                 example: "'https://example.com/foo%20bar' | url decode",
                 result: Some(Value::test_string("https://example.com/foo bar")),
             },
             Example {
-                description: "Decode multiple urls with escape characters in list",
+                description: "Decode multiple URLs with escape characters in list.",
                 example: "['https://example.com/foo%20bar' 'https://example.com/a%3Eb' '%E4%B8%AD%E6%96%87%E5%AD%97/eng/12%2034'] | url decode",
                 result: Some(Value::list(
                     vec![
@@ -111,9 +111,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(UrlDecode {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(UrlDecode)
     }
 }

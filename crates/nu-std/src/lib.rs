@@ -103,11 +103,6 @@ pub fn load_standard_library(
     let mut std_rfc_submodules = vec![
         (
             "mod.nu",
-            "std-rfc/clip",
-            include_str!("../std-rfc/clip/mod.nu"),
-        ),
-        (
-            "mod.nu",
             "std-rfc/conversions",
             include_str!("../std-rfc/conversions/mod.nu"),
         ),
@@ -137,6 +132,11 @@ pub fn load_standard_library(
             "mod.nu",
             "std-rfc/random",
             include_str!("../std-rfc/random/mod.nu"),
+        ),
+        (
+            "mod.nu",
+            "std-rfc/xml",
+            include_str!("../std-rfc/xml/mod.nu"),
         ),
     ];
 

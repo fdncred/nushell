@@ -109,6 +109,21 @@ $"2 + 2 = (2 + 2)"                              # Expressions work too
 
 **Prefer raw strings** (`r#'...'#`) for multi-line content or when mixing quote styles to avoid escaping.
 
+**ANSI escape codes:** Use `ansi strip` to remove ANSI color/formatting codes from output. Do NOT use `\u001b` or similar unicode escapes - nushell doesn't support that syntax.
+```nu
+# BAD - nushell doesn't support \uXXXX unicode escapes
+$output | str replace -a "\u001b" ""        # ERROR: invalid unicode escape
+
+# GOOD - use ansi strip to remove ANSI codes
+$output | ansi strip                         # Removes all ANSI escape sequences
+^rg pattern | ansi strip                     # Strip colors from external command output
+
+# To produce special characters, use the char command
+char escape                                  # ESC character (0x1b)
+char newline                                 # Newline
+char tab                                     # Tab
+```
+
 **Stderr redirection:** Use `o+e>` or `out+err>` instead of bash-style `2>&1`.
 ```nu
 # BAD - bash syntax doesn't work in nushell
@@ -120,19 +135,50 @@ command o+e>| other_command                     # Redirect stderr to stdout, pip
 command o+e>| ignore                            # Discard both stdout and stderr
 ```
 
-HTTP request examples:
+## HTTP Requests
+
+**Automatic JSON parsing:** HTTP commands (`http get`, `http post`, etc.) automatically parse JSON responses into structured Nushell data based on the `Content-Type` header. Do NOT pipe to `from json` - the data is already parsed.
+
+```nu
+# BAD - redundant, will error because input is already structured
+http get https://api.example.com/data | from json
+
+# GOOD - returns structured data directly
+http get https://api.example.com/data
+
+# GOOD - access fields immediately
+http get https://api.example.com/users | get name
+
+# Use --raw (-r) to disable auto-parsing and get raw string
+http get --raw https://api.example.com/data | from json  # Manual parsing
+```
+
+**Common flags:**
+- `-H {key: value}` or `--headers {key: value}`: Custom headers as a record
+- `-t application/json` or `--content-type application/json`: Set Content-Type for request body. Note: `-t json` does NOT work — the full MIME type is required.
+- `(bytes build)`: Empty body (required for POST/PUT when you have no data to send)
+
+**Pipeline content-type:** Commands like `to json` set content-type metadata that `http` commands use automatically:
+```nu
+# Pipeline approach - content-type is set automatically by `to json`
+{foo: "bar", baz: 123} | to json | http post https://api.example.com/endpoint
+```
+
 ```nu
 # GET request
 http get https://api.example.com/data
 
+# GET with auth header
+http get -H {Authorization: "Bearer token"} https://api.example.com/data
+
 # POST with JSON body
-http post --content-type application/json https://api.example.com/endpoint {foo: "bar", baz: 123}
+http post -t application/json https://api.example.com/endpoint {foo: "bar", baz: 123}
 
-# POST with custom headers and empty body
-http post https://api.example.com/sync -H {X-API-Key: "secret"} (bytes build)
+# POST with headers but empty body (bytes build creates empty body)
+http post -H {X-API-Key: "secret"} https://api.example.com/sync (bytes build)
 
-# POST with headers and JSON body
-http post --content-type application/json https://api.example.com/data -H {Authorization: "Bearer token"} {key: "value"}
+# POST with both headers and JSON body
+http post -t application/json -H {Authorization: "Bearer token"} https://api.example.com/data {key: "value"}
 ```
 
 **Parallel iteration:** Prefer `par-each` over `each` for better performance. `par-each` runs closures in parallel across multiple threads.
@@ -151,6 +197,74 @@ ls **/*.rs | par-each --threads 8 { |f| wc -l $f.name }
 - Order must be preserved exactly (par-each returns results in completion order)
 - Side effects must happen sequentially
 - Very small lists where parallelization overhead exceeds benefit
+
+## Background Jobs
+
+Use `job spawn` to run commands in the background. This is the idiomatic nushell replacement for bash's `command &`.
+
+```nu
+# Spawn a background job (returns job ID immediately)
+job spawn { sleep 5sec; echo "done" }
+
+# Spawn with a descriptive tag
+job spawn --tag "web-server" { uvicorn main:app }
+
+# List all running background jobs
+job list
+
+# Kill a background job by ID
+job kill 1
+```
+
+**Getting output from background jobs:** Use the mailbox system with `job send` and `job recv`.
+`job recv` reads from the *current job's mailbox* only. It does not take a job ID.
+The main thread always has job ID `0`, so background jobs should `job send 0`.
+
+```nu
+# Spawn job that sends result back to main thread
+job spawn { ls | job send 0 }
+
+# Wait and receive the result
+job recv
+
+# One-liner version
+job spawn { ls | job send 0 }; job recv
+
+# With timeout (to avoid blocking forever)
+job spawn { some-command | job send 0 }; job recv --timeout 5sec
+
+# Capture stderr too (external command)
+job spawn { ^nc -vz -w 5 51.81.221.204 5432 o+e>| job send 0 }; job recv --timeout 10sec
+```
+
+**Inter-job communication and tags:** Jobs can send messages to each other using tags as filters.
+Tags are integers. `job send --tag N` attaches a tag to the message.
+`job recv --tag N` only receives messages with that exact tag.
+Untagged messages are only received by `job recv` without a `--tag` filter.
+
+```nu
+# Send with a tag for filtering
+job spawn { "result" | job send 0 --tag 1 }
+job recv --tag 1    # Only receives messages with tag 1
+
+# Get current job's ID from within a job
+job spawn { let my_id = job id; ... }
+```
+
+**Job management commands:**
+- `job spawn { ... }` - Start a background job, returns job ID
+- `job list` - List all running jobs
+- `job kill <id>` - Terminate a job
+- `job send <id>` - Send data to a job's mailbox
+- `job recv` - Receive data from mailbox (blocks until message arrives)
+- `job id` - Get current job's ID
+- `job tag <id> <tag>` - Add/change a job's description tag
+
+**Common gotchas:**
+- There is no `job ls`. Use `job list`.
+- `job recv` does not accept a job id or `--id`. It only reads from the current job's mailbox.
+ - `job send` always takes a target job id. The main thread id is `0`.
+ - `job recv --tag N` will ignore untagged messages and messages with other tags.
 
 To find a nushell command or to see all available commands use the list_commands tool.
 To learn more about how to use a command, use the command_help tool.

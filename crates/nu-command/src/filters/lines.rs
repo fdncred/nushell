@@ -15,7 +15,7 @@ impl Command for Lines {
     fn signature(&self) -> nu_protocol::Signature {
         Signature::build("lines")
             .input_output_types(vec![(Type::Any, Type::List(Box::new(Type::String)))])
-            .switch("skip-empty", "skip empty lines", Some('s'))
+            .switch("skip-empty", "Skip empty lines.", Some('s'))
             .category(Category::Filters)
     }
     fn run(
@@ -115,9 +115,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(Lines {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(Lines)
     }
 }

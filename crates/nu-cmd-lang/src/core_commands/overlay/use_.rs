@@ -34,7 +34,7 @@ impl Command for OverlayUse {
             )
             .switch(
                 "prefix",
-                "Prepend module name to the imported commands and aliases",
+                "Prepend module name to the imported commands and aliases.",
                 Some('p'),
             )
             .switch(
@@ -187,28 +187,28 @@ impl Command for OverlayUse {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Create an overlay from a module",
+                description: "Create an overlay from a module.",
                 example: r#"module spam { export def foo [] { "foo" } }
     overlay use spam
     foo"#,
                 result: None,
             },
             Example {
-                description: "Create an overlay from a module and rename it",
+                description: "Create an overlay from a module and rename it.",
                 example: r#"module spam { export def foo [] { "foo" } }
     overlay use spam as spam_new
     foo"#,
                 result: None,
             },
             Example {
-                description: "Create an overlay with a prefix",
+                description: "Create an overlay with a prefix.",
                 example: r#"'export def foo { "foo" }'
     overlay use --prefix spam
     spam foo"#,
                 result: None,
             },
             Example {
-                description: "Create an overlay from a file",
+                description: "Create an overlay from a file.",
                 example: r#"'export-env { $env.FOO = "foo" }' | save spam.nu
     overlay use spam.nu
     $env.FOO"#,
@@ -223,9 +223,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(OverlayUse {})
+    #[ignore = "examples do not run every line separately in test"]
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(OverlayUse)
     }
 }

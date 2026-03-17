@@ -106,12 +106,12 @@ impl Command for Metadata {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Get the metadata of a variable",
+                description: "Get the metadata of a variable.",
                 example: "let a = 42; metadata $a",
                 result: None,
             },
             Example {
-                description: "Get the metadata of the input",
+                description: "Get the metadata of the input.",
                 example: "ls | metadata",
                 result: None,
             },
@@ -134,9 +134,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(Metadata {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(Metadata)
     }
 }

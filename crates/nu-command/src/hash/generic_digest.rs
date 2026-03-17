@@ -48,15 +48,21 @@ where
         Signature::build(self.name())
             .category(Category::Hash)
             .input_output_types(vec![
-                (Type::String, Type::Any),
-                (Type::Binary, Type::Any),
+                (
+                    Type::String,
+                    Type::OneOf(Box::new([Type::String, Type::Binary])),
+                ),
+                (
+                    Type::Binary,
+                    Type::OneOf(Box::new([Type::String, Type::Binary])),
+                ),
                 (Type::table(), Type::table()),
                 (Type::record(), Type::record()),
             ])
             .allow_variants_without_examples(true)
             .switch(
                 "binary",
-                "Output binary instead of hexadecimal representation",
+                "Output binary instead of hexadecimal representation.",
                 Some('b'),
             )
             .rest(

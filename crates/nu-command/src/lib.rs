@@ -7,12 +7,10 @@ mod date;
 mod debug;
 mod default_context;
 mod env;
-mod example_test;
 mod experimental;
 #[cfg(feature = "os")]
 mod filesystem;
 mod filters;
-mod formats;
 mod generators;
 mod hash;
 mod help;
@@ -35,6 +33,8 @@ mod strings;
 mod system;
 mod viewers;
 
+pub(crate) mod formats;
+
 pub use bytes::*;
 pub use charting::*;
 pub use conversions::*;
@@ -42,8 +42,6 @@ pub use date::*;
 pub use debug::*;
 pub use default_context::*;
 pub use env::*;
-#[cfg(test)]
-pub use example_test::{test_examples, test_examples_with_commands};
 pub use experimental::*;
 #[cfg(feature = "os")]
 pub use filesystem::*;
@@ -75,3 +73,10 @@ mod database;
 
 #[cfg(feature = "sqlite")]
 pub use database::*;
+
+#[cfg(test)]
+#[macro_use]
+extern crate nu_test_support;
+
+#[cfg(test)]
+use nu_test_support::harness::main;

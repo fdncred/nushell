@@ -37,7 +37,7 @@ impl Command for FromToml {
         vec![
             Example {
                 example: "'a = 1' | from toml",
-                description: "Converts toml formatted string to record",
+                description: "Converts toml formatted string to record.",
                 result: Some(Value::test_record(record! {
                     "a" => Value::test_int(1),
                 })),
@@ -45,7 +45,7 @@ impl Command for FromToml {
             Example {
                 example: "'a = 1
 b = [1, 2]' | from toml",
-                description: "Converts toml formatted string to record",
+                description: "Converts toml formatted string to record.",
                 result: Some(Value::test_record(record! {
                     "a" =>  Value::test_int(1),
                     "b" =>  Value::test_list(vec![
@@ -78,8 +78,8 @@ fn convert_toml_datetime_to_value(dt: &Datetime, span: Span) -> Value {
         Some(time) => chrono::NaiveTime::from_hms_nano_opt(
             time.hour.into(),
             time.minute.into(),
-            time.second.into(),
-            time.nanosecond,
+            time.second.unwrap_or_default().into(),
+            time.nanosecond.unwrap_or_default(),
         ),
         None => Some(chrono::NaiveTime::default()),
     };
@@ -154,10 +154,8 @@ mod tests {
     use toml::value::Datetime;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(FromToml {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(FromToml)
     }
 
     #[test]
@@ -171,8 +169,8 @@ mod tests {
             time: Option::from(toml::value::Time {
                 hour: 10,
                 minute: 12,
-                second: 44,
-                nanosecond: 0,
+                second: Some(44),
+                nanosecond: Some(0),
             }),
             offset: Option::from(toml::value::Offset::Custom { minutes: 120 }),
         });
@@ -239,8 +237,8 @@ mod tests {
             time: Option::from(toml::value::Time {
                 hour: 12,
                 minute: 12,
-                second: 12,
-                nanosecond: 0,
+                second: Some(12),
+                nanosecond: Some(0),
             }),
             offset: Option::from(toml::value::Offset::Custom { minutes: 120 }),
         };
@@ -270,8 +268,8 @@ mod tests {
             time: Option::from(toml::value::Time {
                 hour: 12,
                 minute: 12,
-                second: 12,
-                nanosecond: 0,
+                second: Some(12),
+                nanosecond: Some(0),
             }),
             offset: None,
         };
@@ -323,8 +321,8 @@ mod tests {
             time: Option::from(toml::value::Time {
                 hour: 12,
                 minute: 12,
-                second: 12,
-                nanosecond: 0,
+                second: Some(12),
+                nanosecond: Some(0),
             }),
             offset: None,
         };
@@ -355,14 +353,16 @@ mod tests {
             .merge_delta(delta)
             .expect("Error merging delta");
 
-        let cmd = r#""[a]\nb = 1\nc = 1" | metadata set --content-type 'text/x-toml' --datasource-ls | from toml | metadata | reject span | $in"#;
+        let cmd = r#""[a]\nb = 1\nc = 1" | metadata set --content-type 'text/x-toml' --path-columns [name] | from toml | metadata | reject span | $in"#;
         let result = eval_pipeline_without_terminal_expression(
             cmd,
             std::env::temp_dir().as_ref(),
             &mut engine_state,
         );
         assert_eq!(
-            Value::test_record(record!("source" => Value::test_string("ls"))),
+            Value::test_record(
+                record!("path_columns" => Value::test_list(vec![Value::test_string("name")]))
+            ),
             result.expect("There should be a result")
         )
     }

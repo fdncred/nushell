@@ -19,7 +19,7 @@ impl Command for FromOds {
             .named(
                 "sheets",
                 SyntaxShape::List(Box::new(SyntaxShape::String)),
-                "Only convert specified sheets",
+                "Only convert specified sheets.",
                 Some('s'),
             )
             .category(Category::Formats)
@@ -53,12 +53,12 @@ impl Command for FromOds {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Convert binary .ods data to a table",
+                description: "Convert binary .ods data to a table.",
                 example: "open --raw test.ods | from ods",
                 result: None,
             },
             Example {
-                description: "Convert binary .ods data to a table, specifying the tables",
+                description: "Convert binary .ods data to a table, specifying the tables.",
                 example: "open --raw test.ods | from ods --sheets [Spreadsheet1]",
                 result: None,
             },
@@ -179,9 +179,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(FromOds {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(FromOds)
     }
 }

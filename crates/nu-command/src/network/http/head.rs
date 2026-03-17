@@ -1,14 +1,12 @@
-use crate::network::http::client::add_unix_socket_flag;
 use crate::network::http::client::{
-    check_response_redirection, expand_unix_socket_path, extract_response_headers,
-    handle_response_status, headers_to_nu, http_client, http_client_pool, http_parse_redirect_mode,
-    http_parse_url, request_add_authorization_header, request_add_custom_headers,
+    RedirectMode, RequestFlags, RequestMetadata, add_unix_socket_flag, check_response_redirection,
+    expand_unix_socket_path, extract_response_headers, handle_response_status, headers_to_nu,
+    http_client, http_client_pool, http_parse_redirect_mode, http_parse_url,
+    request_add_authorization_header, request_add_custom_headers, request_handle_response,
     request_set_timeout, send_request_no_body,
 };
 use nu_engine::command_prelude::*;
 use nu_protocol::Signals;
-
-use super::client::RedirectMode;
 
 #[derive(Clone)]
 pub struct HttpHead;
@@ -30,33 +28,43 @@ impl Command for HttpHead {
             .named(
                 "user",
                 SyntaxShape::Any,
-                "the username when authenticating",
+                "The username when authenticating.",
                 Some('u'),
             )
             .named(
                 "password",
                 SyntaxShape::Any,
-                "the password when authenticating",
+                "The password when authenticating.",
                 Some('p'),
             )
             .named(
                 "max-time",
                 SyntaxShape::Duration,
-                "max duration before timeout occurs",
+                "Max duration before timeout occurs.",
                 Some('m'),
             )
             .named(
                 "headers",
                 SyntaxShape::Any,
-                "custom headers you want to add ",
+                "Custom headers you want to add.",
                 Some('H'),
             )
             .switch(
+                "full",
+                "Returns the full response instead of only the headers.",
+                Some('f'),
+            )
+            .switch(
                 "insecure",
-                "allow insecure server connections when using SSL",
+                "Allow insecure server connections when using SSL.",
                 Some('k'),
             )
-            .switch("pool", "using a global pool as a client", None)
+            .switch(
+                "allow-errors",
+                "Do not fail if the server returns an error code.",
+                Some('e'),
+            )
+            .switch("pool", "Using a global pool as a client.", None)
             .param(
                 Flag::new("redirect-mode")
                     .short('R')
@@ -98,22 +106,22 @@ impl Command for HttpHead {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Get headers from example.com",
+                description: "Get headers from example.com.",
                 example: "http head https://www.example.com",
                 result: None,
             },
             Example {
-                description: "Get headers from example.com, with username and password",
+                description: "Get headers from example.com, with username and password.",
                 example: "http head --user myuser --password mypass https://www.example.com",
                 result: None,
             },
             Example {
-                description: "Get headers from example.com, with custom header using a record",
+                description: "Get headers from example.com, with custom header using a record.",
                 example: "http head --headers {my-header-key: my-header-value} https://www.example.com",
                 result: None,
             },
             Example {
-                description: "Get headers from example.com, with custom header using a list",
+                description: "Get headers from example.com, with custom header using a list.",
                 example: "http head --headers [my-header-key-A my-header-value-A my-header-key-B my-header-value-B] https://www.example.com",
                 result: None,
             },
@@ -128,6 +136,8 @@ struct Arguments {
     user: Option<String>,
     password: Option<String>,
     timeout: Option<Value>,
+    full: bool,
+    allow_errors: bool,
     redirect: Option<Spanned<String>>,
     unix_socket: Option<Spanned<String>>,
     pool: bool,
@@ -146,6 +156,8 @@ fn run_head(
         user: call.get_flag(engine_state, stack, "user")?,
         password: call.get_flag(engine_state, stack, "password")?,
         timeout: call.get_flag(engine_state, stack, "max-time")?,
+        full: call.has_flag(engine_state, stack, "full")?,
+        allow_errors: call.has_flag(engine_state, stack, "allow-errors")?,
         redirect: call.get_flag(engine_state, stack, "redirect-mode")?,
         unix_socket: call.get_flag(engine_state, stack, "unix-socket")?,
         pool: call.has_flag(engine_state, stack, "pool")?,
@@ -173,7 +185,7 @@ fn helper(
     let unix_socket_path = expand_unix_socket_path(args.unix_socket, &cwd);
 
     let mut request = if args.pool {
-        http_client_pool(engine_state, stack).head(&requested_url)
+        http_client_pool(engine_state, stack)?.head(&requested_url)
     } else {
         let client = http_client(
             args.insecure,
@@ -189,11 +201,40 @@ fn helper(
     request = request_add_authorization_header(args.user, args.password, request);
     request = request_add_custom_headers(args.headers, request)?;
 
-    let (response, _request_headers) =
+    let (response, request_headers) =
         send_request_no_body(request, request_span, call.head, signals);
     let response = response?;
     check_response_redirection(redirect_mode, span, &response)?;
-    handle_response_status(&response, redirect_mode, &requested_url, span, false)?;
+
+    if args.full {
+        let request_flags = RequestFlags {
+            // HEAD responses are header-only, so body handling is effectively a no-op.
+            raw: true,
+            full: true,
+            allow_errors: args.allow_errors,
+        };
+
+        return request_handle_response(
+            engine_state,
+            stack,
+            RequestMetadata {
+                requested_url: &requested_url,
+                span,
+                headers: request_headers,
+                redirect_mode,
+                flags: request_flags,
+            },
+            response,
+        );
+    }
+
+    handle_response_status(
+        &response,
+        redirect_mode,
+        &requested_url,
+        span,
+        args.allow_errors,
+    )?;
     headers_to_nu(&extract_response_headers(&response), span)
 }
 
@@ -202,9 +243,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(HttpHead {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(HttpHead)
     }
 }

@@ -10,7 +10,7 @@ impl Command for MathArcSin {
 
     fn signature(&self) -> Signature {
         Signature::build("math arcsin")
-            .switch("degrees", "Return degrees instead of radians", Some('d'))
+            .switch("degrees", "Return degrees instead of radians.", Some('d'))
             .input_output_types(vec![
                 (Type::Number, Type::Float),
                 (
@@ -112,9 +112,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(MathArcSin {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(MathArcSin)
     }
 }

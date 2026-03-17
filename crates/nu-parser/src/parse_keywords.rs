@@ -9,7 +9,7 @@ use crate::{
 };
 
 use log::trace;
-use nu_path::canonicalize_with;
+use nu_path::absolute_with;
 use nu_path::is_windows_device_path;
 use nu_protocol::{
     Alias, BlockId, CommandWideCompleter, CustomExample, DeclId, FromValue, Module, ModuleId,
@@ -57,8 +57,6 @@ pub const ALIASABLE_PARSER_KEYWORDS: &[&[u8]] = &[
     b"overlay new",
     b"overlay use",
 ];
-
-pub const RESERVED_VARIABLE_NAMES: [&str; 3] = ["in", "nu", "env"];
 
 /// These parser keywords cannot be aliased (either not possible, or support not yet added)
 pub const UNALIASABLE_PARSER_KEYWORDS: &[&[u8]] = &[
@@ -333,7 +331,7 @@ pub fn parse_for(working_set: &mut StateWorkingSet, lite_command: &LiteCommand) 
                 {
                     let block = working_set.get_block_mut(*block_id);
 
-                    block.signature = Box::new(sig);
+                    *block.signature = sig;
                 }
             }
 
@@ -375,13 +373,6 @@ pub fn parse_for(working_set: &mut StateWorkingSet, lite_command: &LiteCommand) 
     }
 
     Expression::new(working_set, Expr::Call(call), call_span, Type::Nothing)
-}
-
-/// If `name` is a keyword, emit an error.
-fn verify_not_reserved_variable_name(working_set: &mut StateWorkingSet, name: &str, span: Span) {
-    if RESERVED_VARIABLE_NAMES.contains(&name) {
-        working_set.error(ParseError::NameIsBuiltinVar(name.to_string(), span))
-    }
 }
 
 // This is meant for parsing attribute blocks without an accompanying `def` or `extern`. It's
@@ -647,7 +638,7 @@ fn parse_def_inner(
                         // 2.  `def` calls in scripts/runnable code don't *run* any code either,
                         //     they are handled completely by the parser.
                         compile_block_with_id(working_set, *block_id);
-                        working_set.get_block_mut(*block_id).signature = Box::new(sig.clone());
+                        *working_set.get_block_mut(*block_id).signature = sig.clone();
                     }
                     _ => working_set.error(ParseError::Expected(
                         "definition body closure { ... }",
@@ -709,19 +700,6 @@ fn parse_def_inner(
     let mut result = None;
 
     if let (Some(mut signature), Some(block_id)) = (sig.as_signature(), block.as_block()) {
-        for arg_name in &signature.required_positional {
-            verify_not_reserved_variable_name(working_set, &arg_name.name, sig.span);
-        }
-        for arg_name in &signature.optional_positional {
-            verify_not_reserved_variable_name(working_set, &arg_name.name, sig.span);
-        }
-        if let Some(arg_name) = &signature.rest_positional {
-            verify_not_reserved_variable_name(working_set, &arg_name.name, sig.span);
-        }
-        for flag_name in &signature.get_names() {
-            verify_not_reserved_variable_name(working_set, flag_name, sig.span);
-        }
-
         if has_wrapped {
             if let Some(rest) = &signature.rest_positional {
                 if let Some(var_id) = rest.var_id {
@@ -942,7 +920,7 @@ fn parse_extern_inner(
                         *signature = signature.rest(
                             "args",
                             SyntaxShape::ExternalArgument,
-                            "all other arguments to the command",
+                            "All other arguments to the command.",
                         );
                     }
 
@@ -950,6 +928,7 @@ fn parse_extern_inner(
                         signature,
                         attributes: attribute_vals,
                         examples,
+                        span: call_span,
                     };
 
                     *declaration = Box::new(decl);
@@ -1237,16 +1216,12 @@ pub fn parse_alias(
                 && first_bytes != b"match"
                 && is_math_expression_like(working_set, replacement_spans[0])
             {
-                // TODO: Maybe we need to implement a Display trait for Expression?
                 let starting_error_count = working_set.parse_errors.len();
                 let expr = parse_expression(working_set, replacement_spans);
                 working_set.parse_errors.truncate(starting_error_count);
 
-                let msg = format!("{:?}", expr.expr);
-                let msg_parts: Vec<&str> = msg.split('(').collect();
-
                 working_set.error(ParseError::CantAliasExpression(
-                    msg_parts[0].to_string(),
+                    expr.expr.description().to_string(),
                     replacement_spans[0],
                 ));
                 return alias_pipeline;
@@ -2198,7 +2173,10 @@ pub fn parse_module_file_or_dir(
             return None;
         };
 
-        let mod_nu_path = module_path.clone().join("mod.nu");
+        let mod_nu_path = module_path
+            .clone()
+            .join("mod.nu")
+            .normalize_slashes_forward();
 
         if !(mod_nu_path.exists() && mod_nu_path.is_file()) {
             working_set.error(ParseError::ModuleMissingModNuFile(
@@ -3266,15 +3244,6 @@ pub fn parse_let(working_set: &mut StateWorkingSet, spans: &[Span]) -> Pipeline 
                         working_set.error(ParseError::ExtraTokens(spans[idx + 2]));
                     }
 
-                    let var_name =
-                        String::from_utf8_lossy(working_set.get_span_contents(lvalue.span))
-                            .trim_start_matches('$')
-                            .to_string();
-
-                    if RESERVED_VARIABLE_NAMES.contains(&var_name.as_str()) {
-                        working_set.error(ParseError::NameIsBuiltinVar(var_name, lvalue.span))
-                    }
-
                     let var_id = lvalue.as_var();
                     let rhs_type = rvalue.ty.clone();
 
@@ -3387,15 +3356,6 @@ pub fn parse_const(working_set: &mut StateWorkingSet, spans: &[Span]) -> (Pipeli
                     // check for extra tokens after the identifier
                     if idx + 1 < span.0 - 1 {
                         working_set.error(ParseError::ExtraTokens(spans[idx + 2]));
-                    }
-
-                    let var_name =
-                        String::from_utf8_lossy(working_set.get_span_contents(lvalue.span))
-                            .trim_start_matches('$')
-                            .to_string();
-
-                    if RESERVED_VARIABLE_NAMES.contains(&var_name.as_str()) {
-                        working_set.error(ParseError::NameIsBuiltinVar(var_name, lvalue.span))
                     }
 
                     let var_id = lvalue.as_var();
@@ -3557,15 +3517,6 @@ pub fn parse_mut(working_set: &mut StateWorkingSet, spans: &[Span]) -> Pipeline 
                     // check for extra tokens after the identifier
                     if idx + 1 < span.0 - 1 {
                         working_set.error(ParseError::ExtraTokens(spans[idx + 2]));
-                    }
-
-                    let var_name =
-                        String::from_utf8_lossy(working_set.get_span_contents(lvalue.span))
-                            .trim_start_matches('$')
-                            .to_string();
-
-                    if RESERVED_VARIABLE_NAMES.contains(&var_name.as_str()) {
-                        working_set.error(ParseError::NameIsBuiltinVar(var_name, lvalue.span))
                     }
 
                     let var_id = lvalue.as_var();
@@ -4039,8 +3990,10 @@ pub fn find_in_dirs(
             }
         }
 
-        // Try if we have an existing physical path
-        if let Ok(p) = canonicalize_with(filename, actual_cwd) {
+        // Try if we have an existing filesystem path
+        if let Ok(p) = absolute_with(filename, actual_cwd)
+            && p.exists()
+        {
             return Some(ParserPath::RealPath(p));
         }
 
@@ -4062,8 +4015,9 @@ pub fn find_in_dirs(
             .iter()
             .map(|lib_dir| -> Option<PathBuf> {
                 let dir = lib_dir.to_path().ok()?;
-                let dir_abs = canonicalize_with(dir, actual_cwd).ok()?;
-                canonicalize_with(filename, dir_abs).ok()
+                let dir_abs = absolute_with(dir, actual_cwd).ok()?;
+                let path = absolute_with(filename, dir_abs).ok()?;
+                path.exists().then_some(path)
             })
             .find(Option::is_some)
             .flatten()
@@ -4084,7 +4038,9 @@ pub fn find_in_dirs(
             .current_working_directory()
             .unwrap_or(Path::new(cwd));
 
-        if let Ok(p) = canonicalize_with(filename, actual_cwd) {
+        if let Ok(p) = absolute_with(filename, actual_cwd)
+            && p.exists()
+        {
             Some(p)
         } else {
             let path = Path::new(filename);
@@ -4097,8 +4053,9 @@ pub fn find_in_dirs(
                         for lib_dir in dirs {
                             if let Ok(dir) = lib_dir.to_path() {
                                 // make sure the dir is absolute path
-                                if let Ok(dir_abs) = canonicalize_with(dir, actual_cwd)
-                                    && let Ok(path) = canonicalize_with(filename, dir_abs)
+                                if let Ok(dir_abs) = absolute_with(dir, actual_cwd)
+                                    && let Ok(path) = absolute_with(filename, dir_abs)
+                                    && path.exists()
                                 {
                                     return Some(path);
                                 }

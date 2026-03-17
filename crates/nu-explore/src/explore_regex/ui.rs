@@ -1,23 +1,26 @@
 //! UI drawing functions and application loop for the regex explorer.
 
 use crate::explore_regex::app::{App, InputFocus};
-use crate::explore_regex::colors::styles;
+use crate::explore_regex::colors::{BG_DARK, FG_PRIMARY, styles};
 use crate::explore_regex::quick_ref::QuickRefEntry;
+use edtui::{
+    EditorEventHandler, EditorMode, EditorTheme, EditorView,
+    actions::Paste,
+    events::{KeyEventRegister, KeyInput},
+};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
+        ScrollbarState, Widget,
     },
 };
 use std::io::{self, Stdout};
-use tui_textarea::{CursorMove, Input};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 // ─── Key Action Handling ─────────────────────────────────────────────────────
@@ -26,6 +29,8 @@ use unicode_width::UnicodeWidthStr;
 enum KeyAction {
     Quit,
     ToggleQuickRef,
+    ShowHelp,
+    CloseHelp,
     SwitchFocus,
     FocusRegex,
     QuickRefUp,
@@ -36,14 +41,26 @@ enum KeyAction {
     QuickRefRight,
     QuickRefHome,
     QuickRefInsert,
-    SamplePageUp,
-    SamplePageDown,
-    TextInput(Input),
+    PassToEditor(event::KeyEvent),
     None,
 }
 
-/// Determine the action for a key event based on current app state.
+/// Determine the appropriate action for a key event based on current application state.
+///
+/// This function implements the key event routing logic:
+/// - Help modal captures all keys to close
+/// - Global shortcuts (Ctrl+Q, F1, F2) work everywhere
+/// - Quick reference panel has its own navigation keys when focused
+/// - Sample text pane has page scrolling (Page Up/Down)
+/// - Regex input blocks newlines and maps Page Up/Down to line navigation
+/// - Word navigation (Ctrl+Left/Right) works in both inputs via Emacs emulation
+/// - All other keys are passed to the editor for text input
 fn determine_action(app: &App, key: &event::KeyEvent) -> KeyAction {
+    // If help modal is shown, any key closes it
+    if app.show_help {
+        return KeyAction::CloseHelp;
+    }
+
     // Global shortcuts
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
         return KeyAction::Quit;
@@ -51,6 +68,10 @@ fn determine_action(app: &App, key: &event::KeyEvent) -> KeyAction {
 
     if key.code == KeyCode::F(1) {
         return KeyAction::ToggleQuickRef;
+    }
+
+    if key.code == KeyCode::F(2) {
+        return KeyAction::ShowHelp;
     }
 
     // Quick reference panel navigation
@@ -78,24 +99,23 @@ fn determine_action(app: &App, key: &event::KeyEvent) -> KeyAction {
         return KeyAction::FocusRegex;
     }
 
-    // Sample pane page navigation
-    if app.input_focus == InputFocus::Sample {
-        match key.code {
-            KeyCode::PageUp => return KeyAction::SamplePageUp,
-            KeyCode::PageDown => return KeyAction::SamplePageDown,
-            _ => {}
-        }
-    }
-
-    // Default: pass to text input
-    KeyAction::TextInput(Input::from(Event::Key(*key)))
+    // Default: pass to editor
+    KeyAction::PassToEditor(*key)
 }
 
-/// Execute a key action, modifying app state.
-fn execute_action(app: &mut App, action: KeyAction) -> bool {
+// ─── Main Loop ───────────────────────────────────────────────────────────────
+///
+/// Returns `true` if the application should quit, `false` otherwise.
+fn execute_action(
+    app: &mut App,
+    action: KeyAction,
+    event_handler: &mut EditorEventHandler,
+) -> bool {
     match action {
         KeyAction::Quit => return true,
         KeyAction::ToggleQuickRef => app.toggle_quick_ref(),
+        KeyAction::ShowHelp => app.toggle_help(),
+        KeyAction::CloseHelp => app.show_help = false,
         KeyAction::SwitchFocus => {
             app.input_focus = match app.input_focus {
                 InputFocus::Regex => InputFocus::Sample,
@@ -117,39 +137,32 @@ fn execute_action(app: &mut App, action: KeyAction) -> bool {
         KeyAction::QuickRefRight => app.quick_ref_scroll_right(),
         KeyAction::QuickRefHome => app.quick_ref_scroll_home(),
         KeyAction::QuickRefInsert => app.insert_selected_quick_ref(),
-        KeyAction::SamplePageUp | KeyAction::SamplePageDown => {
-            handle_sample_page_navigation(app, matches!(action, KeyAction::SamplePageDown));
-        }
-        KeyAction::TextInput(input) => handle_text_input(app, input),
+        KeyAction::PassToEditor(key) => handle_editor_input(app, key, event_handler),
         KeyAction::None => {}
     }
     false
 }
 
-fn handle_sample_page_navigation(app: &mut App, page_down: bool) {
-    let page = app.sample_view_height.max(1);
-    let (row, col) = app.sample_textarea.cursor();
-    let max_row = app.sample_textarea.lines().len().saturating_sub(1) as u16;
-
-    let target_row = if page_down {
-        (row as u16).saturating_add(page).min(max_row)
-    } else {
-        (row as u16).saturating_sub(page)
-    };
-
-    app.sample_textarea
-        .move_cursor(CursorMove::Jump(target_row, col as u16));
-}
-
-fn handle_text_input(app: &mut App, input: Input) {
+/// Pass a key event to the editor and handle side effects.
+///
+/// For regex input: recompiles the regex if the text changed.
+/// For sample text: updates match count if the text changed.
+fn handle_editor_input(
+    app: &mut App,
+    key: event::KeyEvent,
+    event_handler: &mut EditorEventHandler,
+) {
     match app.input_focus {
         InputFocus::Regex => {
-            app.regex_textarea.input(input);
-            app.compile_regex();
+            let old_value = app.regex_input.lines.to_string();
+            event_handler.on_key_event(key, &mut app.regex_input);
+            if app.regex_input.lines.to_string() != old_value {
+                app.compile_regex();
+            }
         }
         InputFocus::Sample => {
             let old_text = app.get_sample_text();
-            app.sample_textarea.input(input);
+            event_handler.on_key_event(key, &mut app.sample_text);
             if app.get_sample_text() != old_text {
                 app.update_match_count();
             }
@@ -160,10 +173,24 @@ fn handle_text_input(app: &mut App, input: Input) {
 
 // ─── Main Loop ───────────────────────────────────────────────────────────────
 
+/// Main event loop for the regex explorer.
+///
+/// Sets up custom keybindings to fix edtui bugs and improve UX, then enters the main
+/// draw/event loop. Returns when the user quits (Ctrl+Q) or an error occurs.
 pub fn run_app_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
 ) -> io::Result<()> {
+    // Create event handler for edtui in Emacs mode (modeless editing)
+    let mut event_handler = EditorEventHandler::emacs_mode();
+
+    // Override Ctrl+V to paste (edtui maps it to page-down by default)
+    // Modern users expect Ctrl+V for paste; Emacs users can still use Ctrl+Y
+    event_handler.key_handler.insert(
+        KeyEventRegister::new(vec![KeyInput::ctrl('v')], EditorMode::Insert),
+        Paste,
+    );
+
     loop {
         terminal.draw(|f| draw_ui(f, app))?;
 
@@ -176,7 +203,7 @@ pub fn run_app_loop(
         }
 
         let action = determine_action(app, &key);
-        if execute_action(app, action) {
+        if execute_action(app, action, &mut event_handler) {
             return Ok(());
         }
     }
@@ -208,6 +235,10 @@ fn draw_ui(f: &mut ratatui::Frame, app: &mut App) {
         draw_quick_ref_panel(f, app, chunks[1]);
     } else {
         draw_main_content(f, app, inner_area);
+    }
+
+    if app.show_help {
+        draw_help_modal_overlay(f, app, f.area());
     }
 }
 
@@ -251,7 +282,7 @@ fn draw_regex_section(f: &mut ratatui::Frame, app: &mut App, label_area: Rect, i
     );
     f.render_widget(Paragraph::new(label), label_area);
 
-    // Input block
+    // Border style
     let border_style = if focused {
         if app.regex_error.is_some() {
             styles::border_error()
@@ -268,14 +299,21 @@ fn draw_regex_section(f: &mut ratatui::Frame, app: &mut App, label_area: Rect, i
         .border_style(border_style)
         .padding(Padding::horizontal(1));
 
-    app.regex_textarea.set_block(block);
-    app.regex_textarea.set_cursor_style(if focused {
-        styles::cursor_active()
-    } else {
-        styles::cursor_hidden()
-    });
+    // Render using EditorView with theme (hide cursor, we'll use terminal cursor)
+    let theme = EditorTheme::default()
+        .block(block)
+        .base(Style::default()) // Use terminal default colors instead of hardcoded ones
+        .hide_cursor() // Hide EditorView's block cursor
+        .hide_status_line(); // Hide the "Insert" mode indicator
+    EditorView::new(&mut app.regex_input)
+        .theme(theme)
+        .single_line(true)
+        .render(input_area, f.buffer_mut());
 
-    f.render_widget(&app.regex_textarea, input_area);
+    // Set terminal cursor position if focused
+    if focused && let Some(pos) = app.regex_input.cursor_screen_position() {
+        f.set_cursor_position(pos);
+    }
 }
 
 fn draw_sample_section(
@@ -314,83 +352,23 @@ fn draw_sample_section(
         })
         .padding(Padding::horizontal(1));
 
-    let content = block.inner(content_area);
-    app.sample_view_height = content.height;
+    // Set highlights for regex matches
+    app.sample_text.set_highlights(app.get_highlights());
 
-    // Handle scrolling
-    if focused {
-        update_sample_scroll(app, content);
-    }
+    // Render using EditorView
+    let theme = EditorTheme::default()
+        .block(block)
+        .base(Style::default())
+        .hide_cursor()
+        .hide_status_line();
+    EditorView::new(&mut app.sample_text)
+        .theme(theme)
+        .wrap(false)
+        .render(content_area, f.buffer_mut());
 
-    let text = app.get_highlighted_text();
-    let paragraph = Paragraph::new(text)
-        .scroll((app.sample_scroll_v, app.sample_scroll_h))
-        .block(block);
-
-    f.render_widget(paragraph, content_area);
-
-    // Draw cursor
-    if focused {
-        draw_sample_cursor(f, app, content);
-    }
-}
-
-fn update_sample_scroll(app: &mut App, content: Rect) {
-    let (cursor_row, cursor_col) = app.sample_textarea.cursor();
-    let line = &app.sample_textarea.lines()[cursor_row];
-    let cursor_display_col = line
-        .graphemes(true)
-        .take(cursor_col)
-        .map(|g| g.width())
-        .sum::<usize>() as u16;
-    let cursor_row_u16 = cursor_row as u16;
-
-    // Vertical scrolling
-    if cursor_row_u16 < app.sample_scroll_v {
-        app.sample_scroll_v = cursor_row_u16;
-    } else if cursor_row_u16 >= app.sample_scroll_v + content.height {
-        app.sample_scroll_v = cursor_row_u16 - content.height + 1;
-    }
-
-    // Horizontal scrolling
-    if cursor_display_col < app.sample_scroll_h {
-        app.sample_scroll_h = cursor_display_col;
-    } else if cursor_display_col >= app.sample_scroll_h + content.width {
-        app.sample_scroll_h = cursor_display_col - content.width + 1;
-    }
-}
-
-fn draw_sample_cursor(f: &mut ratatui::Frame, app: &App, content: Rect) {
-    let buf = f.buffer_mut();
-    let (cursor_row, cursor_col) = app.sample_textarea.cursor();
-    let line = &app.sample_textarea.lines()[cursor_row];
-    let prefix_width = line
-        .graphemes(true)
-        .take(cursor_col)
-        .map(|g| g.width())
-        .sum::<usize>() as u16;
-
-    let cursor_x = content.x + prefix_width - app.sample_scroll_h;
-    let cursor_y = content.y + (cursor_row as u16) - app.sample_scroll_v;
-    let grapheme_count = line.graphemes(true).count();
-    let is_eol = cursor_col == grapheme_count;
-
-    let grapheme_width = if is_eol {
-        1
-    } else {
-        line.graphemes(true)
-            .nth(cursor_col)
-            .map(|g| g.width())
-            .unwrap_or(1)
-    };
-
-    for i in 0..grapheme_width {
-        if let Some(cell) = buf.cell_mut((cursor_x + i as u16, cursor_y)) {
-            if is_eol {
-                cell.set_symbol(" ");
-            }
-            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
-        }
+    // Set terminal cursor position if focused
+    if focused && let Some(pos) = app.sample_text.cursor_screen_position() {
+        f.set_cursor_position(pos);
     }
 }
 
@@ -441,6 +419,9 @@ fn draw_help(f: &mut ratatui::Frame, app: &App, area: Rect) {
         } else {
             " Quick Ref"
         }),
+        sep.clone(),
+        help_key("F2"),
+        help_desc(" Help"),
         sep.clone(),
         help_key("Ctrl+Q"),
         help_desc(" Exit"),
@@ -574,4 +555,128 @@ fn draw_scrollbar(f: &mut ratatui::Frame, area: Rect, total: usize, position: us
     };
 
     f.render_stateful_widget(scrollbar, scrollbar_area, &mut state);
+}
+
+// ─── Help Modal Overlay ───────────────────────────────────────────────────────
+
+fn draw_help_modal_overlay(f: &mut ratatui::Frame, _app: &App, area: Rect) {
+    // Define help content
+    let help_lines = vec![
+        "Global Shortcuts",
+        "  Ctrl+Q       Exit",
+        "  F2           Toggle Help",
+        "  F1           Toggle Quick Ref",
+        "  Tab          Switch Focus",
+        "  Esc          Focus Regex",
+        "",
+        "Quick Reference Panel",
+        "  ↑↓ / jk      Navigate",
+        "  ←→ / hl      Scroll",
+        "  Enter        Insert",
+        "  PgUp/PgDn    Page Scroll",
+        "  Home         Scroll to Start",
+        "",
+        "Regex Pattern Pane (single line)",
+        "  ←→                    Move cursor",
+        "  Ctrl+F/B              Forward/Back char",
+        "  Ctrl+A/E              Line head/end",
+        "  Alt+F/B               Forward/Back word",
+        "  Backspace/Ctrl+H      Delete char before",
+        "  Delete/Ctrl+D         Delete char after",
+        "  Ctrl+K                Delete to line end",
+        "  Alt+U                 Delete to line head",
+        "  Alt+Backspace         Delete word before",
+        "  Alt+D                 Delete word after",
+        "  Ctrl+U                Undo",
+        "  Ctrl+R                Redo",
+        "  Ctrl+V / Ctrl+Y       Paste from clipboard",
+        "",
+        "Test String Pane (multi-line) (same as above plus:)",
+        "  Ctrl+N/P              Next/Previous line",
+        "  Enter/Ctrl+J          Insert newline",
+        "",
+        "Press any key to close",
+    ];
+
+    // Calculate required dimensions
+    let content_height = help_lines.len() as u16;
+    let content_width = help_lines
+        .iter()
+        .map(|line| line.width() as u16)
+        .max()
+        .unwrap_or(30);
+
+    // Add padding and borders
+    let modal_width = (content_width + 6).min(area.width - 4);
+    let modal_height = (content_height + 4).min(area.height - 4);
+
+    let modal_x = (area.width - modal_width) / 2;
+    let modal_y = (area.height - modal_height) / 2;
+    let modal_area = Rect::new(modal_x, modal_y, modal_width, modal_height);
+
+    // Modal background style using existing color scheme
+    let modal_bg = Style::default().bg(BG_DARK).fg(FG_PRIMARY);
+
+    // Fill the entire modal area with solid background color by directly writing to buffer
+    // This ensures complete opacity - Clear widget alone doesn't fill with a color
+    let buf = f.buffer_mut();
+    for y in modal_area.y..modal_area.y + modal_area.height {
+        for x in modal_area.x..modal_area.x + modal_area.width {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_char(' ');
+                cell.set_style(modal_bg);
+            }
+        }
+    }
+
+    // Modal block
+    let modal_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(styles::border_focused().bg(BG_DARK))
+        .style(modal_bg)
+        .title(Line::from(vec![Span::styled(
+            " Keybindings Help ",
+            styles::focused().bg(BG_DARK),
+        )]))
+        .title_alignment(Alignment::Center)
+        .padding(Padding::horizontal(2));
+
+    let inner_area = modal_block.inner(modal_area);
+    f.render_widget(modal_block, modal_area);
+
+    // Convert to styled lines using existing color scheme
+    let help_text: Vec<Line> = help_lines
+        .into_iter()
+        .map(|line| {
+            if line.is_empty() {
+                Line::from(Span::styled(" ", modal_bg))
+            } else if line.starts_with("  ") {
+                // Key-value line
+                let parts: Vec<&str> = line.splitn(2, "  ").collect();
+                if parts.len() == 2 {
+                    Line::from(vec![
+                        Span::styled(parts[0].trim_end(), styles::focused().bg(BG_DARK)),
+                        Span::styled(" ", modal_bg),
+                        Span::styled(parts[1], styles::modal_desc().bg(BG_DARK)),
+                    ])
+                } else {
+                    Line::from(vec![Span::styled(line, styles::modal_desc().bg(BG_DARK))])
+                }
+            } else {
+                // Header
+                Line::from(vec![Span::styled(
+                    line,
+                    styles::category_header().bg(BG_DARK),
+                )])
+            }
+        })
+        .collect();
+
+    let paragraph = Paragraph::new(help_text)
+        .style(modal_bg)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .scroll((0, 0));
+
+    f.render_widget(paragraph, inner_area);
 }

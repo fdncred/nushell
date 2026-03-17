@@ -23,7 +23,11 @@ impl Command for Sleep {
         Signature::build("sleep")
             .input_output_types(vec![(Type::Nothing, Type::Nothing)])
             .required("duration", SyntaxShape::Duration, "Time to sleep.")
-            .rest("rest", SyntaxShape::Duration, "Additional time.")
+            .rest(
+                "rest",
+                SyntaxShape::Duration,
+                "Additional time duration to sleep.",
+            )
             .category(Category::Platform)
     }
 
@@ -65,17 +69,17 @@ impl Command for Sleep {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Sleep for 1sec",
+                description: "Sleep for 1 second.",
                 example: "sleep 1sec",
                 result: Some(Value::nothing(Span::test_data())),
             },
             Example {
-                description: "Use multiple arguments to write a duration with multiple units, which is unsupported by duration literals",
+                description: "Use multiple arguments to write a duration with multiple units, which is unsupported by duration literals.",
                 example: "sleep 1min 30sec",
                 result: None,
             },
             Example {
-                description: "Send output after 1sec",
+                description: "Send output after 1 second.",
                 example: "sleep 1sec; echo done",
                 result: None,
             },
@@ -88,17 +92,17 @@ mod tests {
     use super::Sleep;
 
     #[test]
-    fn examples_work_as_expected() {
-        use crate::test_examples;
+    fn examples_work_as_expected() -> nu_test_support::Result {
         use std::time::Instant;
 
         let start = Instant::now();
-        test_examples(Sleep {});
+        nu_test_support::test().examples(Sleep)?;
 
         let elapsed = start.elapsed();
 
         // only examples with actual output are run
         assert!(elapsed >= std::time::Duration::from_secs(1));
         assert!(elapsed < std::time::Duration::from_secs(2));
+        Ok(())
     }
 }

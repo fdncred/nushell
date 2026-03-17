@@ -37,12 +37,12 @@ impl Command for StrSubstring {
             .allow_variants_without_examples(true)
             .switch(
                 "grapheme-clusters",
-                "count indexes and split using grapheme clusters (all visible chars have length 1)",
+                "Count indexes and split using grapheme clusters (all visible chars have length 1).",
                 Some('g'),
             )
             .switch(
                 "utf-8-bytes",
-                "count indexes and split using UTF-8 bytes (default; non-ASCII chars have length 2+)",
+                "Count indexes and split using UTF-8 bytes (default; non-ASCII chars have length 2+).",
                 Some('b'),
             )
             .required(
@@ -125,17 +125,17 @@ impl Command for StrSubstring {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Get a substring \"nushell\" from the text \"good nushell\" using a range",
+                description: "Get a substring \"nushell\" from the text \"good nushell\" using a range.",
                 example: " 'good nushell' | str substring 5..11",
                 result: Some(Value::test_string("nushell")),
             },
             Example {
-                description: "Count indexes and split using grapheme clusters",
+                description: "Count indexes and split using grapheme clusters.",
                 example: " '🇯🇵ほげ ふが ぴよ' | str substring --grapheme-clusters 4..5",
                 result: Some(Value::test_string("ふが")),
             },
             Example {
-                description: "sub string by negative index",
+                description: "sub string by negative index.",
                 example: " 'good nushell' | str substring 5..-2",
                 result: Some(Value::test_string("nushel")),
             },
@@ -199,10 +199,8 @@ mod tests {
     use super::{Arguments, Span, StrSubstring, Value, action};
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StrSubstring {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StrSubstring)
     }
 
     #[derive(Clone, Copy, Debug)]

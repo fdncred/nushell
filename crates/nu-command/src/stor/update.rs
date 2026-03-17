@@ -2,6 +2,7 @@ use crate::database::{MEMORY_DB, SQLiteDatabase, values_to_sql};
 use nu_engine::command_prelude::*;
 use nu_protocol::Signals;
 use rusqlite::params_from_iter;
+use std::fmt::Write;
 
 #[derive(Clone)]
 pub struct StorUpdate;
@@ -23,19 +24,19 @@ impl Command for StorUpdate {
             .required_named(
                 "table-name",
                 SyntaxShape::String,
-                "name of the table you want to insert into",
+                "Name of the table you want to insert into.",
                 Some('t'),
             )
             .named(
                 "update-record",
                 SyntaxShape::Record(vec![]),
-                "a record of column names and column values to update in the specified table",
+                "A record of column names and column values to update in the specified table.",
                 Some('u'),
             )
             .named(
                 "where-clause",
                 SyntaxShape::String,
-                "a sql string to use as a where clause without the WHERE keyword",
+                "A sql string to use as a where clause without the WHERE keyword.",
                 Some('w'),
             )
             .allow_variants_without_examples(true)
@@ -186,7 +187,8 @@ fn process(
         // --and and --or flags as well as supporting ==, !=, <>, is null, is not null, etc.
         // and other sql syntax. So, for now, just type a sql where clause as a string.
         if let Some(where_clause) = where_clause_opt {
-            update_stmt.push_str(&format!(" WHERE {}", where_clause.item));
+            write!(update_stmt, " WHERE {}", where_clause.item)
+                .expect("writing to a String is infallible");
         }
         // dbg!(&update_stmt);
 
@@ -211,9 +213,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StorUpdate {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StorUpdate)
     }
 }

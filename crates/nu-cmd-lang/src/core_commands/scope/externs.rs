@@ -34,7 +34,7 @@ impl Command for ScopeExterns {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Show the known externals in the current scope",
+            description: "Show the known externals in the current scope.",
             example: "scope externs",
             result: None,
         }]
@@ -46,9 +46,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(ScopeExterns {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(ScopeExterns)
     }
 }

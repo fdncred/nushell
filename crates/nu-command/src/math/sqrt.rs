@@ -77,7 +77,7 @@ impl Command for MathSqrt {
 
     fn examples(&self) -> Vec<Example<'_>> {
         vec![Example {
-            description: "Compute the square root of each number in a list",
+            description: "Compute the square root of each number in a list.",
             example: "[9 16] | math sqrt",
             result: Some(Value::list(
                 vec![Value::test_float(3.0), Value::test_float(4.0)],
@@ -134,9 +134,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(MathSqrt {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(MathSqrt)
     }
 }

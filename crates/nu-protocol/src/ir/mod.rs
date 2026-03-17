@@ -109,8 +109,14 @@ pub enum Instruction {
     Move { dst: RegId, src: RegId },
     /// Copy a register (must be a collected value). Value is still in `src` after this instruction.
     Clone { dst: RegId, src: RegId },
-    /// Collect a stream in a register to a value
+    /// Collect a stream in a register to a value.
+    /// Because it collects to a value, nushell will ignore the errors in the stream.
+    /// It's important when the stream is from an external command
     Collect { src_dst: RegId },
+    /// Collect a stream in a register to a value.
+    /// But it's different from `Collect` in that if there is an error in the stream, it will be
+    /// returned as an error instead of being ignored.
+    TryCollect { src_dst: RegId },
     /// Change the span of the contents of a register to the span of this instruction.
     Span { src_dst: RegId },
     /// Drop the value/stream in a register, without draining
@@ -250,9 +256,16 @@ pub enum Instruction {
     /// Push an error handler, capturing the error value into `dst`. If the error handler is not
     /// called, the register should be freed manually.
     OnErrorInto { index: usize, dst: RegId },
+    /// Push an finally handler, without capturing the error value
+    Finally { index: usize },
+    /// Push an finally handler, capturing the error value into `dst`. If the finally handler is not
+    /// called, the register should be freed manually.
+    FinallyInto { index: usize, dst: RegId },
     /// Pop an error handler. This is not necessary when control flow is directed to the error
     /// handler due to an error.
     PopErrorHandler,
+    /// Pop an finally handler.
+    PopFinallyRun,
     /// Return early from the block, raising a `ShellError::Return` instead.
     ///
     /// Collecting the value is unavoidable.
@@ -285,6 +298,7 @@ impl Instruction {
             Instruction::Move { dst, .. } => Some(dst),
             Instruction::Clone { dst, .. } => Some(dst),
             Instruction::Collect { src_dst } => Some(src_dst),
+            Instruction::TryCollect { src_dst } => Some(src_dst),
             Instruction::Span { src_dst } => Some(src_dst),
             Instruction::Drop { .. } => None,
             Instruction::Drain { .. } => None,
@@ -327,8 +341,11 @@ impl Instruction {
             Instruction::CheckMatchGuard { .. } => None,
             Instruction::Iterate { dst, .. } => Some(dst),
             Instruction::OnError { .. } => None,
+            Instruction::Finally { .. } => None,
             Instruction::OnErrorInto { .. } => None,
+            Instruction::FinallyInto { .. } => None,
             Instruction::PopErrorHandler => None,
+            Instruction::PopFinallyRun => None,
             Instruction::ReturnEarly { .. } => None,
             Instruction::Return { .. } => None,
         }
@@ -353,6 +370,8 @@ impl Instruction {
             } => Some(*end_index),
             Instruction::OnError { index } => Some(*index),
             Instruction::OnErrorInto { index, dst: _ } => Some(*index),
+            Instruction::Finally { index } => Some(*index),
+            Instruction::FinallyInto { index, dst: _ } => Some(*index),
             _ => None,
         }
     }
@@ -378,6 +397,8 @@ impl Instruction {
             } => *end_index = target_index,
             Instruction::OnError { index } => *index = target_index,
             Instruction::OnErrorInto { index, dst: _ } => *index = target_index,
+            Instruction::Finally { index } => *index = target_index,
+            Instruction::FinallyInto { index, dst: _ } => *index = target_index,
             _ => return Err(target_index),
         }
         Ok(())
@@ -444,6 +465,9 @@ pub enum Literal {
     CellPath(Box<CellPath>),
     Date(Box<DateTime<FixedOffset>>),
     Nothing,
+    /// Represents an empty pipeline input (distinct from `Nothing` which is the `null` value).
+    /// Used by `load_empty` to initialize registers with no input.
+    Empty,
 }
 
 /// A redirection mode for the next call. See [`OutDest`](crate::OutDest).

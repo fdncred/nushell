@@ -1,4 +1,4 @@
-use super::hex::{ActionType, operate};
+use super::hex::{operate, ActionType};
 use nu_engine::command_prelude::*;
 
 #[derive(Clone)]
@@ -24,7 +24,7 @@ impl Command for EncodeHex {
             .rest(
                 "rest",
                 SyntaxShape::CellPath,
-                "For a data structure input, encode data at the given cell paths",
+                "For a data structure input, encode data at the given cell paths.",
             )
             .category(Category::Formats)
     }
@@ -57,7 +57,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        crate::test_examples(EncodeHex)
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(EncodeHex)
     }
 }

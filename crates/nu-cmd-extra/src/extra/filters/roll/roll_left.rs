@@ -22,12 +22,12 @@ impl Command for RollLeft {
             .named(
                 "by",
                 SyntaxShape::Int,
-                "Number of columns to roll",
+                "Number of columns to roll.",
                 Some('b'),
             )
             .switch(
                 "cells-only",
-                "rotates columns leaving headers fixed",
+                "Rotates columns leaving headers fixed.",
                 Some('c'),
             )
             .category(Category::Filters)
@@ -90,6 +90,7 @@ impl Command for RollLeft {
         call: &Call,
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
+        let input = input.into_stream_or_original(engine_state);
         let by: Option<usize> = call.get_flag(engine_state, stack, "by")?;
         let metadata = input.metadata();
 
@@ -107,9 +108,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(RollLeft {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(RollLeft)
     }
 }

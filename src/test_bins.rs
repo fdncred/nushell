@@ -10,9 +10,15 @@ use nu_protocol::{
 use nu_std::load_standard_library;
 use std::{
     collections::HashMap,
-    io::{self, BufRead, Read, Write},
+    fmt::Write,
+    io::{self, BufRead, Read, Write as IoWrite},
     sync::Arc,
 };
+
+// color constants should match those used in `command.rs` so the help output appears consistent when embedded.
+const HELP_SUBCMD_COLOR: &str = "\x1b[96m"; // bright cyan
+const HELP_DESC_COLOR: &str = "\x1b[2;39m"; // dark gray
+const RESET_COLOR: &str = "\x1b[0m";
 
 pub trait TestBin {
     fn help(&self) -> &'static str;
@@ -495,6 +501,28 @@ pub fn show_help(dispatcher: &std::collections::HashMap<String, Box<dyn TestBin>
         let test_bin = dispatcher.get(n).expect("Test bin should exist");
         println!("{n} -> {}", test_bin.help())
     }
+}
+
+/// Return a formatted help listing suitable for inclusion in usage output.
+///
+/// The indentation matches the layout used by [`cli_help_text`] in `command.rs`, so callers can simply append it after the `--testbin` description.
+pub fn help_list() -> String {
+    let dispatcher = new_testbin_dispatcher();
+    let mut pairs: Vec<_> = dispatcher.iter().collect();
+    pairs.sort_by_key(|(name, _)| *name);
+
+    let mut out = String::new();
+    for (name, test_bin) in pairs {
+        let help = test_bin.help();
+        // use bright cyan for the subcommand and dark gray for the description,
+        // matching the styling used elsewhere in the CLI help output.
+        writeln!(
+            out,
+            "      {HELP_SUBCMD_COLOR}{name}{RESET_COLOR} -> {HELP_DESC_COLOR}{help}{RESET_COLOR}",
+        )
+        .expect("writing to a String is infallible");
+    }
+    out
 }
 
 /// Create a new testbin dispatcher, which is useful to guide the testbin to run.

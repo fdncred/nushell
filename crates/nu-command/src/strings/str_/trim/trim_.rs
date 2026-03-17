@@ -48,17 +48,17 @@ impl Command for StrTrim {
             .named(
                 "char",
                 SyntaxShape::String,
-                "character to trim (default: whitespace)",
+                "Character to trim (default: whitespace).",
                 Some('c'),
             )
             .switch(
                 "left",
-                "trims characters only from the beginning of the string",
+                "Trims characters only from the beginning of the string.",
                 Some('l'),
             )
             .switch(
                 "right",
-                "trims characters only from the end of the string",
+                "Trims characters only from the end of the string.",
                 Some('r'),
             )
             .category(Category::Strings)
@@ -119,27 +119,27 @@ impl Command for StrTrim {
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                description: "Trim whitespace",
+                description: "Trim whitespace.",
                 example: "'Nu shell ' | str trim",
                 result: Some(Value::test_string("Nu shell")),
             },
             Example {
-                description: "Trim a specific character (not the whitespace)",
+                description: "Trim a specific character (not the whitespace).",
                 example: "'=== Nu shell ===' | str trim --char '='",
                 result: Some(Value::test_string(" Nu shell ")),
             },
             Example {
-                description: "Trim whitespace from the beginning of string",
+                description: "Trim whitespace from the beginning of string.",
                 example: "' Nu shell ' | str trim --left",
                 result: Some(Value::test_string("Nu shell ")),
             },
             Example {
-                description: "Trim whitespace from the end of string",
+                description: "Trim whitespace from the end of string.",
                 example: "' Nu shell ' | str trim --right",
                 result: Some(Value::test_string(" Nu shell")),
             },
             Example {
-                description: "Trim a specific character only from the end of the string",
+                description: "Trim a specific character only from the end of the string.",
                 example: "'=== Nu shell ===' | str trim --right --char '='",
                 result: Some(Value::test_string("=== Nu shell ")),
             },
@@ -269,10 +269,8 @@ mod tests {
     use nu_protocol::{Span, Value};
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StrTrim {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StrTrim)
     }
 
     fn make_record(cols: Vec<&str>, vals: Vec<&str>) -> Value {

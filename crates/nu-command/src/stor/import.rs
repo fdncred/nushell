@@ -16,7 +16,7 @@ impl Command for StorImport {
             .required_named(
                 "file-name",
                 SyntaxShape::String,
-                "file name to import the sqlite in-memory database from",
+                "File name to import the sqlite in-memory database from.",
                 Some('f'),
             )
             .allow_variants_without_examples(true)
@@ -84,9 +84,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_examples() {
-        use crate::test_examples;
-
-        test_examples(StorImport {})
+    fn test_examples() -> nu_test_support::Result {
+        nu_test_support::test().examples(StorImport)
     }
 }

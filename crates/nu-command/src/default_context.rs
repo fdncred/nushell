@@ -219,6 +219,7 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
             StrDistance,
             StrDowncase,
             StrEndswith,
+            StrEscapeRegex,
             StrExpand,
             StrJoin,
             StrReplace,
@@ -255,6 +256,15 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
         };
 
         // Platform
+        #[cfg(all(feature = "os", not(target_arch = "wasm32")))]
+        if nu_experimental::NATIVE_CLIP.get() {
+            bind_command! {
+                ClipCommand,
+                ClipCopy,
+                ClipPaste,
+            };
+        }
+
         #[cfg(feature = "os")]
         bind_command! {
             Clear,
@@ -273,6 +283,9 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
 
         #[cfg(all(unix, feature = "os"))]
         bind_command! { ULimit };
+
+        #[cfg(all(unix, feature = "os"))]
+        bind_command! { UMask };
 
         // Date
         bind_command! {
@@ -303,8 +316,8 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
             FromTsv,
             FromXlsx,
             FromXml,
-            FromYaml,
-            FromYml,
+            FROM_YAML,
+            FROM_YML,
             To,
             ToCsv,
             ToJson,
@@ -318,8 +331,8 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
             Upsert,
             Where,
             ToXml,
-            ToYaml,
-            ToYml,
+            TO_YAML,
+            TO_YML,
         };
 
         // Viewers
@@ -429,7 +442,6 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
             Random,
             RandomBool,
             RandomChars,
-            RandomDice,
             RandomFloat,
             RandomInt,
             RandomUuid,
@@ -459,7 +471,7 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
             JobList,
             JobKill,
             JobId,
-            JobTag,
+            JobDescribe,
             Job,
         };
 
