@@ -75,6 +75,12 @@ impl Command for Table {
                 "Number of terminal columns wide (not output columns).",
                 Some('w'),
             )
+            .named(
+                "width-sample",
+                SyntaxShape::Int,
+                "Number of rows to sample for automatic column width calculation.",
+                Some('s'),
+            )
             .switch(
                 "expand",
                 "Expand the table structure in a light mode.",
@@ -210,6 +216,11 @@ impl Command for Table {
                 example: r#"[[a b]; [1 2] [3 [4 4]]] | table -i false"#,
                 result: None,
             },
+            Example {
+                description: "Adjust column width heuristic by sampling the first row",
+                example: r#"[[a b]; [1 22] [333 4]] | table --width-sample 1"#,
+                result: None,
+            },
         ]
     }
 }
@@ -239,6 +250,8 @@ pub(crate) fn render_value_as_plain_table_text(
 struct TableConfig {
     view: TableView,
     width: usize,
+    /// How many rows to sample when computing column widths.
+    width_sample: Option<usize>,
     theme: TableMode,
     abbreviation: Option<usize>,
     index: Option<usize>,
@@ -253,6 +266,7 @@ impl TableConfig {
     fn new(
         view: TableView,
         width: usize,
+        width_sample: Option<usize>,
         theme: TableMode,
         abbreviation: Option<usize>,
         index: Option<usize>,
@@ -262,6 +276,7 @@ impl TableConfig {
         Self {
             view,
             width,
+            width_sample,
             theme,
             abbreviation,
             index,
@@ -285,6 +300,7 @@ enum TableView {
 
 struct CLIArgs {
     width: Option<i64>,
+    width_sample: Option<usize>,
     abbrivation: Option<usize>,
     theme: TableMode,
     expand: bool,
@@ -309,6 +325,7 @@ fn parse_table_config(
     let cfg = TableConfig::new(
         table_view,
         term_width,
+        args.width_sample,
         args.theme,
         args.abbrivation,
         args.index,
@@ -333,6 +350,18 @@ fn get_table_view(args: &CLIArgs) -> TableView {
 
 fn get_cli_args(call: &Call<'_>, state: &EngineState, stack: &mut Stack) -> ShellResult<CLIArgs> {
     let width: Option<i64> = call.get_flag(state, stack, "width")?;
+    let width_sample: Option<usize> = match call.get_flag::<i64>(state, stack, "width-sample")? {
+        Some(val) if val > 0 => Some(val as usize),
+        Some(val) => {
+            return Err(ShellError::UnsupportedInput {
+                msg: String::from("got a non-positive integer"),
+                input: val.to_string(),
+                msg_span: call.span(),
+                input_span: call.span(),
+            });
+        }
+        None => None,
+    };
     let expand: bool = call.has_flag(state, stack, "expand")?;
     let expand_limit: Option<usize> = call.get_flag(state, stack, "expand-deep")?;
     let expand_flatten: bool = call.has_flag(state, stack, "flatten")?;
@@ -358,6 +387,7 @@ fn get_cli_args(call: &Call<'_>, state: &EngineState, stack: &mut Stack) -> Shel
         expand_flatten,
         expand_flatten_separator,
         width,
+        width_sample,
         index,
         use_ansi_coloring,
         icons,
@@ -949,36 +979,44 @@ impl PagingTableCreator {
         }
     }
 
-    fn build_table(&mut self, batch: Vec<Value>) -> ShellResult<Option<String>> {
+    fn build_table(&mut self, mut batch: Vec<Value>) -> ShellResult<Option<String>> {
         if batch.is_empty() {
             return Ok(None);
         }
         // Compute column widths from the first batch if not already done
         if self.table_config.column_widths.borrow().is_none() {
-            let headers = nu_engine::column::get_columns(&batch);
-            if !headers.is_empty() {
-                let mut widths = vec![0; headers.len()];
-                // Start with header lengths, minimum 1, maximum 10
-                for (i, header) in headers.iter().enumerate() {
-                    widths[i] = header.len().clamp(1, 10);
+            if let Some(sample_size) = self.table_config.width_sample {
+                let headers = nu_engine::column::get_columns(&batch);
+                if !headers.is_empty() {
+                    let widths = compute_column_widths_from_sample(
+                        &headers,
+                        &batch,
+                        sample_size,
+                        &self.config,
+                    );
+                    *self.table_config.column_widths.borrow_mut() = Some(widths);
                 }
-                // Analyze sample rows
-                for val in batch.iter().take(10) {
-                    if let Value::Record { val: record, .. } = val {
-                        for (i, header) in headers.iter().enumerate() {
-                            if let Some(value) = record.get(header) {
-                                let content = value.to_expanded_string("", &Config::default());
-                                let content_len = content.len().min(20); // Limit content length consideration
-                                widths[i] = widths[i].max(content_len.max(1));
+            }
+        }
+
+        // If we have fixed column widths from sampling, make sure any later rows don't
+        // exceed those widths by truncating values that are too long.
+        if let Some(widths) = self.table_config.column_widths.borrow().as_ref() {
+            let headers = nu_engine::column::get_columns(&batch);
+            for value in &mut batch {
+                if let Value::Record { val: record, .. } = value {
+                    let record = record.to_mut();
+                    for (i, header) in headers.iter().enumerate().take(widths.len()) {
+                        if let Some(cell) = record.get_mut(header) {
+                            let s = cell.to_abbreviated_string(&self.config);
+                            let w = nu_table::string_width(&s);
+                            if w > widths[i] {
+                                let truncated = nu_table::string_truncate(&s, widths[i]);
+                                *cell = Value::string(truncated, cell.span());
                             }
                         }
                     }
                 }
-                // Cap at 10, minimum 1 (more conservative to avoid papergrid panics)
-                for w in &mut widths {
-                    *w = (*w).clamp(1, 10);
-                }
-                *self.table_config.column_widths.borrow_mut() = Some(widths);
             }
         }
 
@@ -1065,6 +1103,54 @@ impl Iterator for PagingTableCreator {
     }
 }
 
+fn compute_column_widths_from_sample(
+    headers: &[String],
+    batch: &[Value],
+    sample_size: usize,
+    config: &Config,
+) -> Vec<usize> {
+    // Compute a trimmed mean across a sample of rows to avoid outliers (e.g. very long
+    // command strings) blowing up the observed column width.
+    let mut lengths: Vec<Vec<usize>> = vec![Vec::new(); headers.len()];
+
+    for value in batch.iter().take(sample_size) {
+        if let Value::Record { val: record, .. } = value {
+            for (i, header) in headers.iter().enumerate() {
+                if let Some(val) = record.get(header) {
+                    let content = val.to_abbreviated_string(config);
+                    lengths[i].push(nu_table::string_width(&content));
+                }
+            }
+        }
+    }
+
+    headers
+        .iter()
+        .enumerate()
+        .map(|(i, header)| {
+            let avg = if lengths[i].is_empty() {
+                0
+            } else {
+                // Trim the top/bottom 10% to reduce outlier influence, but keep at least one value.
+                lengths[i].sort_unstable();
+                let total = lengths[i].len();
+                let trim = total / 10;
+                let (start, end) = if trim > 0 && total > trim * 2 {
+                    (trim, total - trim)
+                } else {
+                    (0, total)
+                };
+                let trimmed = &lengths[i][start..end];
+
+                let sum: usize = trimmed.iter().sum();
+                (sum + trimmed.len() - 1) / trimmed.len()
+            };
+
+            header.len().max(avg).max(1)
+        })
+        .collect()
+}
+
 fn stream_collect(
     stream: impl Iterator<Item = Value>,
     size: usize,
@@ -1139,6 +1225,35 @@ fn stream_collect_abbreviated(
     head.extend(tail);
 
     (head, read, end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nu_protocol::{Value, record};
+
+    #[test]
+    fn compute_column_widths_uses_median_over_sample() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let batch = vec![
+            Value::test_record(record! {
+                "a" => Value::test_int(1),
+                "b" => Value::test_int(10000),
+            }),
+            Value::test_record(record! {
+                "a" => Value::test_int(123456),
+                "b" => Value::test_int(2),
+            }),
+        ];
+
+        let cfg = Config::default();
+
+        let widths1 = compute_column_widths_from_sample(&headers, &batch, 1, &cfg);
+        assert_eq!(widths1, vec![1, 5]);
+
+        let widths2 = compute_column_widths_from_sample(&headers, &batch, 2, &cfg);
+        assert_eq!(widths2, vec![4, 3]);
+    }
 }
 
 fn get_abbreviated_dummy(head: &[Value], tail: &VecDeque<Value>) -> Value {

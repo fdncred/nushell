@@ -141,9 +141,21 @@ fn create_table_with_header_and_index(
 
     table.set_row(0, head.clone());
 
-    // Apply custom column widths if provided, including width for index column
+    // Apply custom column widths if provided.
+    // When the table has an index column, we want the index column to fit the
+    // largest index value, not a fixed width.
     if let Some(widths) = opts.column_widths.borrow().as_ref() {
-        let mut full_widths = vec![5]; // index column width
+        let max_index = row_offset + input.len().saturating_sub(1);
+        let mut digits = 1;
+        let mut value = max_index;
+        while value >= 10 {
+            digits += 1;
+            value /= 10;
+        }
+        // Include padding around the value.
+        let index_width = digits + 2;
+
+        let mut full_widths = vec![index_width];
         full_widths.extend(widths.iter());
         table.set_column_widths(&full_widths);
     }

@@ -906,6 +906,53 @@ fn truncate_columns_by_content(
         return WidthEstimation::new(widths_original, widths, width, false, false);
     }
 
+    // If we can't fit the next column, try shrinking already-included columns first.
+    // This helps avoid wrapping the last column by giving it more width when possible.
+    // We prioritize shrinking rightmost columns first so that leftmost columns keep as much
+    // of their content as possible.
+    if truncate_pos > 0 && truncate_pos < count_columns {
+        let next_width = widths_original[truncate_pos];
+        let required_for_next = next_width + vertical;
+        let available = termwidth.saturating_sub(width);
+
+        if available < required_for_next {
+            let mut need = required_for_next.saturating_sub(available);
+
+            // Determine the maximum content width for each included column so we
+            // never shrink a column smaller than its content. Note that `widths` include
+            // padding, so we must add padding to the content width when comparing.
+            let mut max_content = vec![0; truncate_pos];
+            for row in data.iter() {
+                for (col, cell) in row.iter().enumerate().take(truncate_pos) {
+                    max_content[col] = max_content[col].max(cell.width() + pad);
+                }
+            }
+
+            for idx in (0..truncate_pos).rev() {
+                if need == 0 {
+                    break;
+                }
+
+                let min_allowed = std::cmp::max(min_column_width, max_content[idx]);
+                let shrinkable = widths[idx].saturating_sub(min_allowed);
+                if shrinkable == 0 {
+                    continue;
+                }
+
+                let shrink = std::cmp::min(shrinkable, need);
+                widths[idx] -= shrink;
+                width -= shrink;
+                need -= shrink;
+            }
+
+            if need == 0 && width + required_for_next <= termwidth {
+                widths.push(next_width);
+                width += required_for_next;
+                truncate_pos += 1;
+            }
+        }
+    }
+
     let is_last_column = truncate_pos + 1 == count_columns;
     if truncate_pos == 0 && !is_last_column {
         if termwidth > width {
@@ -1203,6 +1250,13 @@ fn truncate_columns_by_head(
     if available >= trailing_column_width + vertical {
         truncate_rows(data, truncate_pos);
 
+        // Allocate any remaining space to the last included column so it gets as much room as possible.
+        if let Some(last) = widths.last_mut() {
+            let extra = available.saturating_sub(trailing_column_width + vertical);
+            *last += extra;
+            width += extra;
+        }
+
         push_empty_column(data);
         widths.push(trailing_column_width);
         width += trailing_column_width + vertical;
@@ -1217,10 +1271,21 @@ fn truncate_columns_by_head(
     //       We intentionally check only last column.
     //       Although space could be given from any column.
     let last_column_width = widths[truncate_pos - 1];
-    let last_column_width_min = NuRecordsValue::width(&data[0][truncate_pos - 1]) + pad;
-    let last_column_width_free = last_column_width - last_column_width_min;
+
+    // Ensure we never shrink the last column below its actual content width.
+    let mut last_column_max_content = 0;
+    for row in data.iter() {
+        last_column_max_content =
+            last_column_max_content.max(NuRecordsValue::width(&row[truncate_pos - 1]));
+    }
+    let last_column_width_min = last_column_max_content;
+
+    let last_column_width_free = last_column_width.saturating_sub(last_column_width_min);
     if available + last_column_width_free >= trailing_column_width + vertical {
-        let use_width = trailing_column_width + vertical - available;
+        // `available` can be bigger than `trailing_column_width + vertical`, so use saturating math to avoid underflow.
+        let needed = trailing_column_width + vertical;
+        let use_width = needed.saturating_sub(available).min(last_column_width_free);
+
         widths[truncate_pos - 1] -= use_width;
         width -= use_width;
 
