@@ -5,7 +5,7 @@
 // TODO: (not hard) We could properly handle dimension - we already do it for width - just need to do height as well
 // TODO: (need to check) Maybe Vec::with_dimension and insert "Iterators" would be better instead of preallocated Vec<Vec<>> and index.
 
-use std::cmp::{max, min};
+use std::cmp::max;
 
 use nu_ansi_term::Style;
 use nu_color_config::TextStyle;
@@ -21,7 +21,7 @@ use tabled::{
         },
         dimension::{CompleteDimension, PeekableGridDimension},
         records::{
-            IterRecords, PeekableRecords,
+            ExactRecords, IterRecords, PeekableRecords,
             vec_records::{Cell, Text, VecRecords},
         },
     },
@@ -80,6 +80,7 @@ impl NuTable {
                 header_on_border: false,
                 expand: false,
                 border_color: None,
+                custom_widths: false,
             },
         }
     }
@@ -279,6 +280,7 @@ impl NuTable {
     pub fn set_column_widths(&mut self, widths: &[usize]) {
         if widths.len() == self.count_cols {
             self.widths.copy_from_slice(widths);
+            self.config.custom_widths = true;
         }
     }
 
@@ -366,6 +368,7 @@ pub struct TableConfig {
     structure: TableStructure,
     header_on_border: bool,
     indent: TableIndent,
+    custom_widths: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -661,6 +664,7 @@ impl DimensionCtrl {
 
 #[derive(Debug, Clone)]
 struct WidthEstimation {
+    #[allow(dead_code)]
     original: Vec<usize>,
     needed: Vec<usize>,
     #[allow(dead_code)]
@@ -738,24 +742,38 @@ fn width_ctrl_truncate(
     let mut heights = ctrl.heights;
 
     // todo: maybe general for loop better
-    for (col, (&width, width_original)) in ctrl
-        .width
-        .needed
-        .iter()
-        .zip(ctrl.width.original)
-        .enumerate()
-    {
-        if width == width_original {
-            continue;
-        }
-
-        let width = width - ctrl.pad;
+    for (col, &width) in ctrl.width.needed.iter().enumerate() {
+        let width = width.saturating_sub(ctrl.pad).max(1);
 
         match &ctrl.trim_strategy {
             TrimStrategy::Wrap { try_to_keep_words } => {
                 let wrap = Width::wrap(width).keep_words(*try_to_keep_words);
-
                 CellOption::<NuRecords, _>::change(wrap, recs, cfg, Entity::Column(col));
+
+                if *try_to_keep_words {
+                    let exceeds_width = (0..recs.count_rows()).any(|row| {
+                        let pos = Position::new(row, col);
+                        (0..recs.count_lines(pos))
+                            .any(|line| recs.get_line_width(pos, line) > width)
+                    });
+                    if exceeds_width {
+                        // Keep-words wrapping can leave long unbreakable tokens wider than the column.
+                        // Fall back to hard wrapping for this column to avoid renderer underflow/panic.
+                        let wrap = Width::wrap(width).keep_words(false);
+                        CellOption::<NuRecords, _>::change(wrap, recs, cfg, Entity::Column(col));
+                    }
+                }
+
+                let exceeds_width = (0..recs.count_rows()).any(|row| {
+                    let pos = Position::new(row, col);
+                    (0..recs.count_lines(pos)).any(|line| recs.get_line_width(pos, line) > width)
+                });
+                if exceeds_width {
+                    // Safety fallback: ensure final cell lines never exceed the assigned
+                    // column width, otherwise renderer alignment math can underflow.
+                    let truncate = Width::truncate(width).suffix_try_color(true);
+                    CellOption::<NuRecords, _>::change(truncate, recs, cfg, Entity::Column(col));
+                }
 
                 // NOTE: An optimization to have proper heights without going over all the data again.
                 // We are going only for all rows in changed columns
@@ -853,14 +871,27 @@ fn maybe_truncate_columns(
 
     let pad = cfg.indent.left + cfg.indent.right;
     let preserve_content = termwidth > TERMWIDTH_THRESHOLD;
-
-    if truncate_by_head {
+    let mut estimation = if cfg.custom_widths {
+        // Custom sampled widths are data-driven; bypass header-only fitting so we can
+        // preserve dominant data columns (for example `command`) and collapse tail columns.
+        if preserve_content {
+            truncate_columns_by_columns(data, widths, &cfg.theme, pad, termwidth, true)
+        } else {
+            truncate_columns_by_content(data, widths, &cfg.theme, pad, termwidth)
+        }
+    } else if truncate_by_head {
         truncate_columns_by_head(data, widths, &cfg.theme, pad, termwidth)
     } else if preserve_content {
-        truncate_columns_by_columns(data, widths, &cfg.theme, pad, termwidth)
+        truncate_columns_by_columns(data, widths, &cfg.theme, pad, termwidth, false)
     } else {
         truncate_columns_by_content(data, widths, &cfg.theme, pad, termwidth)
+    };
+
+    if cfg.custom_widths {
+        estimation.truncate = true;
     }
+
+    estimation
 }
 
 // VERSION where we are showing AS LITTLE COLUMNS AS POSSIBLE but WITH AS MUCH CONTENT AS POSSIBLE.
@@ -903,7 +934,9 @@ fn truncate_columns_by_content(
     }
 
     if truncate_pos == count_columns {
-        return WidthEstimation::new(widths_original, widths, width, false, false);
+        // Keep truncation controls enabled so custom sampled widths are enforced
+        // even when all selected columns fit into terminal width.
+        return WidthEstimation::new(widths_original, widths, width, true, false);
     }
 
     // If we can't fit the next column, try shrinking already-included columns first.
@@ -1090,11 +1123,16 @@ fn truncate_columns_by_columns(
     theme: &TableTheme,
     pad: usize,
     termwidth: usize,
+    custom_widths: bool,
 ) -> WidthEstimation {
+    const MIN_BASELINE_CONTENT_WIDTH: usize = 8;
+    const MIN_DOMINANT_OUTLIER_RATIO: usize = 2;
+    const MIN_TRAILING_COLUMNS_FOR_DOMINANT: usize = 3;
     const MIN_ACCEPTABLE_WIDTH: usize = 10;
     const TRAILING_COLUMN_WIDTH: usize = EMPTY_COLUMN_TEXT_WIDTH;
 
     let trailing_column_width = TRAILING_COLUMN_WIDTH + pad;
+    let min_baseline_column_width = MIN_BASELINE_CONTENT_WIDTH + pad;
     let min_column_width = MIN_ACCEPTABLE_WIDTH + pad;
 
     let count_columns = data[0].len();
@@ -1110,7 +1148,7 @@ fn truncate_columns_by_columns(
     let mut truncate_pos = 0;
 
     for (i, &width_orig) in widths_original.iter().enumerate() {
-        let use_width = min(min_column_width, width_orig);
+        let use_width = width_orig.clamp(min_baseline_column_width, min_column_width);
         let mut next_move = use_width;
         if i > 0 {
             next_move += vertical;
@@ -1132,20 +1170,88 @@ fn truncate_columns_by_columns(
     let mut available = termwidth - width;
 
     if available > 0 {
-        for i in 0..truncate_pos {
-            let used_width = widths[i];
-            let col_width = widths_original[i];
-            if used_width < col_width {
-                let need = col_width - used_width;
-                let take = min(available, need);
-                available -= take;
+        let consumed = redistribute_available_width(
+            &mut widths[..truncate_pos],
+            &widths_original[..truncate_pos],
+            available,
+        );
+        available -= consumed;
+        width += consumed;
+    }
 
-                widths[i] += take;
-                width += take;
+    // If sampled widths indicate a dominant non-tail column (typically `command`),
+    // reserve substantial width for it and collapse only trailing columns into `...`.
+    if custom_widths {
+        // Activate this path only for right-side outliers so we don't over-expand
+        // early columns (for example `name`) and leave half of the screen empty.
+        let mut dominant_idx = if truncate_pos >= 2 {
+            let visible = &widths_original[..truncate_pos];
+            let mut sorted = visible.to_vec();
+            sorted.sort_unstable();
+            let median = sorted[sorted.len() / 2];
+            let min_outlier_width = median
+                .saturating_mul(MIN_DOMINANT_OUTLIER_RATIO)
+                .max(min_column_width + pad);
+            let right_half_start = truncate_pos / 2;
 
-                if available == 0 {
-                    break;
+            (right_half_start..truncate_pos).rev().find(|&idx| {
+                let trailing_columns = count_columns.saturating_sub(idx + 1);
+                idx + 1 < count_columns
+                    && trailing_columns >= MIN_TRAILING_COLUMNS_FOR_DOMINANT
+                    && widths_original[idx] >= min_outlier_width
+            })
+        } else {
+            None
+        };
+
+        if let Some(ref mut dominant_idx) = dominant_idx {
+            // Keep through the dominant column, drop columns after it, and
+            // give the dominant column at least about half terminal width.
+            while truncate_pos > *dominant_idx + 1 {
+                truncate_pos -= 1;
+                let removed = widths.pop().expect("width exists");
+                width -= removed + vertical;
+            }
+
+            let mut local_available = termwidth.saturating_sub(width);
+            let has_hidden_columns = truncate_pos < count_columns;
+            let required_for_trailing = if has_hidden_columns {
+                trailing_column_width + vertical
+            } else {
+                0
+            };
+
+            let desired = termwidth / 2;
+            let need = desired.saturating_sub(widths[*dominant_idx]);
+            // Reserve room for the trailing overflow column whenever columns are hidden.
+            let growth_budget = local_available.saturating_sub(required_for_trailing);
+            let take = need.min(growth_budget);
+            widths[*dominant_idx] += take;
+            width += take;
+            local_available -= take;
+
+            if has_hidden_columns {
+                if local_available < required_for_trailing {
+                    // If needed, reclaim a bit from the dominant column so we can still
+                    // display the overflow marker column.
+                    let reclaim = (required_for_trailing - local_available)
+                        .min(widths[*dominant_idx].saturating_sub(min_column_width));
+                    widths[*dominant_idx] -= reclaim;
+                    width -= reclaim;
+                    local_available += reclaim;
                 }
+
+                truncate_rows(data, truncate_pos);
+
+                if local_available >= trailing_column_width + vertical {
+                    push_empty_column(data);
+                    widths.push(trailing_column_width);
+                    width += trailing_column_width + vertical;
+
+                    return WidthEstimation::new(widths_original, widths, width, true, true);
+                }
+
+                return WidthEstimation::new(widths_original, widths, width, true, false);
             }
         }
     }
@@ -1225,22 +1331,13 @@ fn truncate_columns_by_head(
     let mut available = termwidth - width;
 
     if available > 0 {
-        for i in 0..truncate_pos {
-            let used_width = widths[i];
-            let col_width = widths_original[i];
-            if used_width < col_width {
-                let need = col_width - used_width;
-                let take = min(available, need);
-                available -= take;
-
-                widths[i] += take;
-                width += take;
-
-                if available == 0 {
-                    break;
-                }
-            }
-        }
+        let consumed = redistribute_available_width(
+            &mut widths[..truncate_pos],
+            &widths_original[..truncate_pos],
+            available,
+        );
+        available -= consumed;
+        width += consumed;
     }
 
     if truncate_pos == count_columns {
@@ -1329,6 +1426,52 @@ fn push_empty_column(data: &mut Vec<Vec<NuRecordsValue>>) {
     for row in data {
         row.push(empty_cell.clone());
     }
+}
+
+fn redistribute_available_width(
+    widths: &mut [usize],
+    widths_original: &[usize],
+    mut available: usize,
+) -> usize {
+    if available == 0 || widths.is_empty() {
+        return 0;
+    }
+
+    let initial_available = available;
+    let mut remaining: Vec<usize> = widths_original
+        .iter()
+        .zip(widths.iter())
+        .map(|(orig, used)| orig.saturating_sub(*used))
+        .collect();
+
+    // Favor columns that still need the most width and break ties by choosing
+    // rightmost columns first (for command-like tail columns).
+    while available > 0 {
+        let mut best_idx = None;
+        let mut best_score = 0;
+
+        for (idx, &need) in remaining.iter().enumerate() {
+            if need == 0 {
+                continue;
+            }
+
+            let score = need.saturating_mul(2).saturating_add(idx + 1);
+            if best_idx.is_none() || score > best_score {
+                best_idx = Some(idx);
+                best_score = score;
+            }
+        }
+
+        let Some(idx) = best_idx else {
+            break;
+        };
+
+        widths[idx] += 1;
+        remaining[idx] = remaining[idx].saturating_sub(1);
+        available -= 1;
+    }
+
+    initial_available - available
 }
 
 fn duplicate_row(data: &mut Vec<Vec<NuRecordsValue>>, row: usize) {

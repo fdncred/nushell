@@ -141,25 +141,6 @@ fn create_table_with_header_and_index(
 
     table.set_row(0, head.clone());
 
-    // Apply custom column widths if provided.
-    // When the table has an index column, we want the index column to fit the
-    // largest index value, not a fixed width.
-    if let Some(widths) = opts.column_widths.borrow().as_ref() {
-        let max_index = row_offset + input.len().saturating_sub(1);
-        let mut digits = 1;
-        let mut value = max_index;
-        while value >= 10 {
-            digits += 1;
-            value /= 10;
-        }
-        // Include padding around the value.
-        let index_width = digits + 2;
-
-        let mut full_widths = vec![index_width];
-        full_widths.extend(widths.iter());
-        table.set_column_widths(&full_widths);
-    }
-
     for (row, item) in input.into_iter().enumerate() {
         opts.signals.check(&opts.span)?;
         check_value(&item)?;
@@ -174,6 +155,26 @@ fn create_table_with_header_and_index(
             table.insert(pos, text);
             table.insert_style(pos, style);
         }
+    }
+
+    // Apply custom column widths after all cells are inserted so insert-time
+    // width growth does not overwrite sampled widths.
+    // When the table has an index column, we want the index column to fit the
+    // largest index value, not a fixed width.
+    if let Some(widths) = opts.column_widths.borrow().as_ref() {
+        let max_index = row_offset + table.count_rows().saturating_sub(2);
+        let mut digits = 1;
+        let mut value = max_index;
+        while value >= 10 {
+            digits += 1;
+            value /= 10;
+        }
+
+        // Include padding around the value.
+        let index_width = digits + 2;
+        let mut full_widths = vec![index_width];
+        full_widths.extend(widths.iter());
+        table.set_column_widths(&full_widths);
     }
 
     Ok(Some(table))

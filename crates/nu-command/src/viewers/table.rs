@@ -15,7 +15,7 @@ use nu_engine::{command_prelude::*, env_to_string};
 use nu_path::form::Absolute;
 use nu_pretty_hex::HexConfig;
 use nu_protocol::{
-    ByteStream, Config, DataSource, ListStream, PipelineMetadata, Signals, TableMode,
+    ByteStream, Config, DataSource, ListStream, PipelineMetadata, Signals, TableMode, TrimStrategy,
     ValueIterator,
     shell_error::{bridge::ShellErrorBridge, io::IoError},
 };
@@ -262,31 +262,6 @@ struct TableConfig {
     column_widths: std::cell::RefCell<Option<Vec<usize>>>,
 }
 
-impl TableConfig {
-    fn new(
-        view: TableView,
-        width: usize,
-        width_sample: Option<usize>,
-        theme: TableMode,
-        abbreviation: Option<usize>,
-        index: Option<usize>,
-        use_ansi_coloring: bool,
-        icons: bool,
-    ) -> Self {
-        Self {
-            view,
-            width,
-            width_sample,
-            theme,
-            abbreviation,
-            index,
-            use_ansi_coloring,
-            icons,
-            column_widths: std::cell::RefCell::new(None),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum TableView {
     General,
@@ -322,16 +297,17 @@ fn parse_table_config(
     let table_view = get_table_view(&args);
     let term_width = get_table_width(args.width);
 
-    let cfg = TableConfig::new(
-        table_view,
-        term_width,
-        args.width_sample,
-        args.theme,
-        args.abbrivation,
-        args.index,
-        args.use_ansi_coloring,
-        args.icons,
-    );
+    let cfg = TableConfig {
+        view: table_view,
+        width: term_width,
+        width_sample: args.width_sample,
+        theme: args.theme,
+        abbreviation: args.abbrivation,
+        index: args.index,
+        use_ansi_coloring: args.use_ansi_coloring,
+        icons: args.icons,
+        column_widths: std::cell::RefCell::new(None),
+    };
 
     Ok(cfg)
 }
@@ -979,44 +955,25 @@ impl PagingTableCreator {
         }
     }
 
-    fn build_table(&mut self, mut batch: Vec<Value>) -> ShellResult<Option<String>> {
+    fn build_table(&mut self, batch: Vec<Value>) -> ShellResult<Option<String>> {
         if batch.is_empty() {
             return Ok(None);
         }
-        // Compute column widths from the first batch if not already done
-        if self.table_config.column_widths.borrow().is_none() {
-            if let Some(sample_size) = self.table_config.width_sample {
-                let headers = nu_engine::column::get_columns(&batch);
-                if !headers.is_empty() {
-                    let widths = compute_column_widths_from_sample(
-                        &headers,
-                        &batch,
-                        sample_size,
-                        &self.config,
-                    );
-                    *self.table_config.column_widths.borrow_mut() = Some(widths);
-                }
-            }
-        }
 
-        // If we have fixed column widths from sampling, make sure any later rows don't
-        // exceed those widths by truncating values that are too long.
-        if let Some(widths) = self.table_config.column_widths.borrow().as_ref() {
+        // Compute column widths from the first batch if not already done
+        if self.table_config.column_widths.borrow().is_none()
+            && let Some(sample_size) = self.table_config.width_sample
+        {
             let headers = nu_engine::column::get_columns(&batch);
-            for value in &mut batch {
-                if let Value::Record { val: record, .. } = value {
-                    let record = record.to_mut();
-                    for (i, header) in headers.iter().enumerate().take(widths.len()) {
-                        if let Some(cell) = record.get_mut(header) {
-                            let s = cell.to_abbreviated_string(&self.config);
-                            let w = nu_table::string_width(&s);
-                            if w > widths[i] {
-                                let truncated = nu_table::string_truncate(&s, widths[i]);
-                                *cell = Value::string(truncated, cell.span());
-                            }
-                        }
-                    }
-                }
+            if !headers.is_empty() {
+                let widths = compute_column_widths_from_sample(
+                    &headers,
+                    &batch,
+                    sample_size,
+                    self.table_config.width,
+                    &self.config,
+                );
+                *self.table_config.column_widths.borrow_mut() = Some(widths);
             }
         }
 
@@ -1107,10 +1064,39 @@ fn compute_column_widths_from_sample(
     headers: &[String],
     batch: &[Value],
     sample_size: usize,
+    term_width: usize,
     config: &Config,
 ) -> Vec<usize> {
-    // Compute a trimmed mean across a sample of rows to avoid outliers (e.g. very long
-    // command strings) blowing up the observed column width.
+    let metrics = collect_column_sample_metrics(headers, batch, sample_size, config);
+    let pad = config.table.padding.left + config.table.padding.right;
+    let min_content_width = match &config.table.trim {
+        TrimStrategy::Truncate { suffix } => suffix
+            .as_ref()
+            .map_or(3, |value| value.chars().count().max(1)),
+        TrimStrategy::Wrap { .. } => 1,
+    };
+
+    allocate_widths_from_metrics(&metrics, term_width)
+        .into_iter()
+        .map(|width| width.saturating_add(pad).max(pad + min_content_width))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ColumnSampleMetrics {
+    header_floor: usize,
+    trimmed_mean: usize,
+    percentile_90: usize,
+    max_width: usize,
+    wrap_pressure: f64,
+}
+
+fn collect_column_sample_metrics(
+    headers: &[String],
+    batch: &[Value],
+    sample_size: usize,
+    config: &Config,
+) -> Vec<ColumnSampleMetrics> {
     let mut lengths: Vec<Vec<usize>> = vec![Vec::new(); headers.len()];
 
     for value in batch.iter().take(sample_size) {
@@ -1128,27 +1114,114 @@ fn compute_column_widths_from_sample(
         .iter()
         .enumerate()
         .map(|(i, header)| {
-            let avg = if lengths[i].is_empty() {
-                0
-            } else {
-                // Trim the top/bottom 10% to reduce outlier influence, but keep at least one value.
-                lengths[i].sort_unstable();
-                let total = lengths[i].len();
-                let trim = total / 10;
-                let (start, end) = if trim > 0 && total > trim * 2 {
-                    (trim, total - trim)
-                } else {
-                    (0, total)
-                };
-                let trimmed = &lengths[i][start..end];
+            lengths[i].sort_unstable();
 
-                let sum: usize = trimmed.iter().sum();
-                (sum + trimmed.len() - 1) / trimmed.len()
-            };
+            let header_floor = header.len().max(1);
+            let trimmed_mean = trimmed_mean_or_zero(&lengths[i]);
+            let percentile_90 = percentile_90_or_zero(&lengths[i]);
+            let max_width = lengths[i].last().copied().unwrap_or(0);
 
-            header.len().max(avg).max(1)
+            let baseline = header_floor.max(trimmed_mean).max(1) as f64;
+            let long_tail = percentile_90.max(max_width) as f64;
+            let wrap_pressure = (long_tail / baseline).max(1.0);
+
+            ColumnSampleMetrics {
+                header_floor,
+                trimmed_mean,
+                percentile_90,
+                max_width,
+                wrap_pressure,
+            }
         })
         .collect()
+}
+
+fn trimmed_mean_or_zero(sorted: &[usize]) -> usize {
+    if sorted.is_empty() {
+        return 0;
+    }
+
+    // Trim the top/bottom 10% to reduce outlier influence, but keep at least one value.
+    let total = sorted.len();
+    let trim = total / 10;
+    let (start, end) = if trim > 0 && total > trim * 2 {
+        (trim, total - trim)
+    } else {
+        (0, total)
+    };
+    let trimmed = &sorted[start..end];
+    let sum: usize = trimmed.iter().sum();
+    sum.div_ceil(trimmed.len())
+}
+
+fn percentile_90_or_zero(sorted: &[usize]) -> usize {
+    if sorted.is_empty() {
+        return 0;
+    }
+
+    // rank = ceil(0.9 * n) using integer math.
+    let rank = (sorted.len() * 9).div_ceil(10);
+    sorted[rank.saturating_sub(1)]
+}
+
+fn allocate_widths_from_metrics(metrics: &[ColumnSampleMetrics], term_width: usize) -> Vec<usize> {
+    const WIDE_TERMINAL_THRESHOLD: usize = 130;
+    const NON_PRIORITY_GROWTH_CAP: usize = 12;
+
+    let mut widths: Vec<usize> = metrics
+        .iter()
+        .map(|m| m.header_floor.max(m.trimmed_mean).max(1))
+        .collect();
+
+    let priority_tail = if term_width >= WIDE_TERMINAL_THRESHOLD {
+        find_wrap_priority_tail(metrics)
+    } else {
+        None
+    };
+
+    if let Some(priority_idx) = priority_tail {
+        for (idx, metric) in metrics.iter().enumerate() {
+            if idx == priority_idx {
+                continue;
+            }
+
+            let cap = metric
+                .header_floor
+                .max(metric.trimmed_mean.saturating_add(NON_PRIORITY_GROWTH_CAP))
+                .max(metric.percentile_90);
+
+            widths[idx] = widths[idx].clamp(metric.header_floor, cap);
+        }
+
+        // A wider terminal can afford reducing wrap depth for long tail columns (e.g. `command`).
+        // Bias toward giving the priority column roughly half the terminal when sample data supports it.
+        let bonus = term_width / 8;
+        let half_screen_target = term_width / 2;
+        let tail_target = metrics[priority_idx]
+            .percentile_90
+            .max(metrics[priority_idx].trimmed_mean)
+            .max(half_screen_target)
+            .saturating_add(bonus)
+            .min(metrics[priority_idx].max_width.max(widths[priority_idx]));
+        widths[priority_idx] = widths[priority_idx].max(tail_target);
+    }
+
+    widths
+}
+
+fn find_wrap_priority_tail(metrics: &[ColumnSampleMetrics]) -> Option<usize> {
+    const MIN_PRIORITY_COLUMN_WIDTH: usize = 24;
+    const MIN_WRAP_PRESSURE: f64 = 1.60;
+
+    metrics.iter().enumerate().rev().find_map(|(idx, metric)| {
+        let is_wide = metric.max_width >= MIN_PRIORITY_COLUMN_WIDTH;
+        let wraps_a_lot = metric.wrap_pressure >= MIN_WRAP_PRESSURE;
+        if is_wide && wraps_a_lot {
+            Some(idx)
+        } else {
+            None
+        }
+    })
 }
 
 fn stream_collect(
@@ -1225,35 +1298,6 @@ fn stream_collect_abbreviated(
     head.extend(tail);
 
     (head, read, end)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nu_protocol::{Value, record};
-
-    #[test]
-    fn compute_column_widths_uses_median_over_sample() {
-        let headers = vec!["a".to_string(), "b".to_string()];
-        let batch = vec![
-            Value::test_record(record! {
-                "a" => Value::test_int(1),
-                "b" => Value::test_int(10000),
-            }),
-            Value::test_record(record! {
-                "a" => Value::test_int(123456),
-                "b" => Value::test_int(2),
-            }),
-        ];
-
-        let cfg = Config::default();
-
-        let widths1 = compute_column_widths_from_sample(&headers, &batch, 1, &cfg);
-        assert_eq!(widths1, vec![1, 5]);
-
-        let widths2 = compute_column_widths_from_sample(&headers, &batch, 2, &cfg);
-        assert_eq!(widths2, vec![4, 3]);
-    }
 }
 
 fn get_abbreviated_dummy(head: &[Value], tail: &VecDeque<Value>) -> Value {
@@ -1498,5 +1542,105 @@ fn get_table_width(width_param: Option<i64>) -> usize {
         w as usize
     } else {
         DEFAULT_TABLE_WIDTH
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nu_protocol::{Value, record};
+
+    #[test]
+    fn compute_column_widths_uses_trimmed_mean_over_sample() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let batch = vec![
+            Value::test_record(record! {
+                "a" => Value::test_int(1),
+                "b" => Value::test_int(10000),
+            }),
+            Value::test_record(record! {
+                "a" => Value::test_int(123456),
+                "b" => Value::test_int(2),
+            }),
+        ];
+
+        let cfg = Config::default();
+
+        let widths1 = compute_column_widths_from_sample(&headers, &batch, 1, 80, &cfg);
+        assert_eq!(widths1, vec![3, 7]);
+
+        let widths2 = compute_column_widths_from_sample(&headers, &batch, 2, 80, &cfg);
+        assert_eq!(widths2, vec![6, 5]);
+    }
+
+    #[test]
+    fn compute_column_widths_prioritizes_tail_column_on_wide_terminals() {
+        let headers = vec!["pid".to_string(), "name".to_string(), "command".to_string()];
+        let batch = vec![
+            Value::test_record(record! {
+                "pid" => Value::test_int(100),
+                "name" => Value::test_string("nushell"),
+                "command" => Value::test_string("/opt/local/bin/very/long/path/to/a/program/with/many/arguments --foo --bar --baz"),
+            }),
+            Value::test_record(record! {
+                "pid" => Value::test_int(101),
+                "name" => Value::test_string("cargo"),
+                "command" => Value::test_string("/Users/me/.cargo/bin/cargo run --release --package nu-command --features stable"),
+            }),
+        ];
+
+        let cfg = Config::default();
+        let widths = compute_column_widths_from_sample(&headers, &batch, 2, 160, &cfg);
+
+        assert_eq!(widths.len(), 3);
+        assert!(widths[2] > widths[0]);
+        assert!(widths[2] > widths[1]);
+    }
+
+    #[test]
+    fn collect_column_metrics_respects_header_floor_with_sparse_data() {
+        let headers = vec!["id".to_string(), "description".to_string()];
+        let batch = vec![Value::test_record(record! {
+            "id" => Value::test_int(42),
+        })];
+
+        let cfg = Config::default();
+        let metrics = collect_column_sample_metrics(&headers, &batch, 1, &cfg);
+
+        assert_eq!(metrics.len(), 2);
+        assert_eq!(metrics[0].header_floor, 2);
+        assert_eq!(metrics[1].header_floor, 11);
+        assert!(metrics[1].trimmed_mean == 0);
+    }
+
+    #[test]
+    fn compute_column_widths_changes_with_larger_sample_window() {
+        let headers = vec!["pid".to_string(), "name".to_string(), "command".to_string()];
+        let batch = vec![
+            Value::test_record(record! {
+                "pid" => Value::test_int(1),
+                "name" => Value::test_string("nu"),
+                "command" => Value::test_string("/bin/nu"),
+            }),
+            Value::test_record(record! {
+                "pid" => Value::test_int(2),
+                "name" => Value::test_string("cargo"),
+                "command" => Value::test_string("/Users/dev/.cargo/bin/cargo run --release --package nu-command --features stable"),
+            }),
+            Value::test_record(record! {
+                "pid" => Value::test_int(3),
+                "name" => Value::test_string("python"),
+                "command" => Value::test_string("/usr/bin/python3 /opt/project/scripts/very/long/script/path/with/multiple/segments.py --with-long-arguments"),
+            }),
+        ];
+
+        let cfg = Config::default();
+
+        let widths_small_sample = compute_column_widths_from_sample(&headers, &batch, 1, 160, &cfg);
+        let widths_large_sample = compute_column_widths_from_sample(&headers, &batch, 3, 160, &cfg);
+
+        assert_eq!(widths_small_sample.len(), 3);
+        assert_eq!(widths_large_sample.len(), 3);
+        assert!(widths_large_sample[2] > widths_small_sample[2]);
     }
 }
