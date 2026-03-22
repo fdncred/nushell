@@ -15,8 +15,8 @@ use nu_engine::{command_prelude::*, env_to_string};
 use nu_path::form::Absolute;
 use nu_pretty_hex::HexConfig;
 use nu_protocol::{
-    ByteStream, Config, DataSource, ListStream, PipelineMetadata, Signals, TableMode,
-    ValueIterator,
+    ByteStream, Config, DataSource, ListStream, PipelineMetadata, Signals,
+    TABLE_WIDTH_PRIORITY_COLUMNS_METADATA_KEY, TableMode, ValueIterator,
     shell_error::{bridge::ShellErrorBridge, io::IoError},
 };
 use nu_table::{
@@ -244,28 +244,7 @@ struct TableConfig {
     index: Option<usize>,
     use_ansi_coloring: bool,
     icons: bool,
-}
-
-impl TableConfig {
-    fn new(
-        view: TableView,
-        width: usize,
-        theme: TableMode,
-        abbreviation: Option<usize>,
-        index: Option<usize>,
-        use_ansi_coloring: bool,
-        icons: bool,
-    ) -> Self {
-        Self {
-            view,
-            width,
-            theme,
-            abbreviation,
-            index,
-            use_ansi_coloring,
-            icons,
-        }
-    }
+    width_priority_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,15 +281,16 @@ fn parse_table_config(
     let table_view = get_table_view(&args);
     let term_width = get_table_width(args.width);
 
-    let cfg = TableConfig::new(
-        table_view,
-        term_width,
-        args.theme,
-        args.abbrivation,
-        args.index,
-        args.use_ansi_coloring,
-        args.icons,
-    );
+    let cfg = TableConfig {
+        view: table_view,
+        width: term_width,
+        theme: args.theme,
+        abbreviation: args.abbrivation,
+        index: args.index,
+        use_ansi_coloring: args.use_ansi_coloring,
+        icons: args.icons,
+        width_priority_columns: vec![],
+    };
 
     Ok(cfg)
 }
@@ -578,7 +558,7 @@ fn pretty_hex_stream(stream: ByteStream, span: Span) -> ByteStream {
 }
 
 fn handle_record(
-    input: CmdInput,
+    mut input: CmdInput,
     mut record: Record,
     metadata: Option<PipelineMetadata>,
 ) -> ShellResult<PipelineData> {
@@ -599,6 +579,8 @@ fn handle_record(
     if let Some(limit) = input.cfg.abbreviation {
         record = make_record_abbreviation(record, limit);
     }
+
+    input.cfg.width_priority_columns = get_width_priority_columns(metadata.as_ref());
 
     let config = input.get_config();
 
@@ -751,10 +733,12 @@ fn build_table_batch(
 }
 
 fn handle_row_stream(
-    input: CmdInput<'_>,
+    mut input: CmdInput<'_>,
     stream: ListStream,
     metadata: Option<PipelineMetadata>,
 ) -> ShellResult<PipelineData> {
+    input.cfg.width_priority_columns = get_width_priority_columns(metadata.as_ref());
+
     let cfg = input.get_config();
 
     let stream = if let Some(metadata) = metadata {
@@ -1329,7 +1313,49 @@ fn create_table_opts<'a>(
     let width = table_cfg.width;
     let theme = table_cfg.theme;
 
-    TableOpts::new(cfg, comp, signals, span, width, theme, offset, index)
+    TableOpts::new(
+        cfg,
+        comp,
+        signals,
+        span,
+        width,
+        theme,
+        offset,
+        index,
+        table_cfg.width_priority_columns.clone(),
+    )
+}
+
+fn get_width_priority_columns(metadata: Option<&PipelineMetadata>) -> Vec<String> {
+    let mut width_priority_columns = Vec::new();
+
+    let Some(metadata) = metadata else {
+        return width_priority_columns;
+    };
+
+    let Some(value) = metadata
+        .custom
+        .get(TABLE_WIDTH_PRIORITY_COLUMNS_METADATA_KEY)
+    else {
+        return width_priority_columns;
+    };
+
+    let Ok(values) = value.as_list() else {
+        return width_priority_columns;
+    };
+
+    for value in values {
+        if let Ok(column_name) = value.as_str()
+            && !column_name.is_empty()
+            && !width_priority_columns
+                .iter()
+                .any(|column| column == column_name)
+        {
+            width_priority_columns.push(column_name.to_string());
+        }
+    }
+
+    width_priority_columns
 }
 
 fn get_cwd(engine_state: &EngineState, stack: &mut Stack) -> ShellResult<Option<NuPathBuf>> {

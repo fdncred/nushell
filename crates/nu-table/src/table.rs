@@ -80,6 +80,7 @@ impl NuTable {
                 header_on_border: false,
                 expand: false,
                 border_color: None,
+                width_priority_columns: vec![],
             },
         }
     }
@@ -273,6 +274,16 @@ impl NuTable {
         self.config.border_color = (!color.is_plain()).then_some(color);
     }
 
+    pub fn set_width_priority_columns(&mut self, columns: &[usize]) {
+        self.config.width_priority_columns.clear();
+
+        for &column in columns {
+            if column < self.count_cols && !self.config.width_priority_columns.contains(&column) {
+                self.config.width_priority_columns.push(column);
+            }
+        }
+    }
+
     pub fn clear_border_color(&mut self) {
         self.config.border_color = None;
     }
@@ -357,6 +368,7 @@ pub struct TableConfig {
     structure: TableStructure,
     header_on_border: bool,
     indent: TableIndent,
+    width_priority_columns: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -461,7 +473,10 @@ fn table_insert_footer_if(t: &mut NuTable) {
 }
 
 fn table_truncate(t: &mut NuTable, termwidth: usize) -> Option<WidthEstimation> {
-    let truncate_by_head = is_header_on_border(t);
+    // Header-on-border mode normally truncates by header width, but that strategy
+    // can starve explicit width priorities. If priorities are provided, prefer
+    // the column-based strategy so priority columns can be widened first.
+    let truncate_by_head = is_header_on_border(t) && t.config.width_priority_columns.is_empty();
     let widths = maybe_truncate_columns(
         &mut t.data,
         t.widths.clone(),
@@ -846,9 +861,23 @@ fn maybe_truncate_columns(
     let preserve_content = termwidth > TERMWIDTH_THRESHOLD;
 
     if truncate_by_head {
-        truncate_columns_by_head(data, widths, &cfg.theme, pad, termwidth)
+        truncate_columns_by_head(
+            data,
+            widths,
+            &cfg.theme,
+            pad,
+            termwidth,
+            &cfg.width_priority_columns,
+        )
     } else if preserve_content {
-        truncate_columns_by_columns(data, widths, &cfg.theme, pad, termwidth)
+        truncate_columns_by_columns(
+            data,
+            widths,
+            &cfg.theme,
+            pad,
+            termwidth,
+            &cfg.width_priority_columns,
+        )
     } else {
         truncate_columns_by_content(data, widths, &cfg.theme, pad, termwidth)
     }
@@ -1034,9 +1063,11 @@ fn truncate_columns_by_columns(
     theme: &TableTheme,
     pad: usize,
     termwidth: usize,
+    width_priority_columns: &[usize],
 ) -> WidthEstimation {
     const MIN_ACCEPTABLE_WIDTH: usize = 10;
     const TRAILING_COLUMN_WIDTH: usize = EMPTY_COLUMN_TEXT_WIDTH;
+    const SECONDARY_PRIORITY_BONUS_LIMIT: usize = 6;
 
     let trailing_column_width = TRAILING_COLUMN_WIDTH + pad;
     let min_column_width = MIN_ACCEPTABLE_WIDTH + pad;
@@ -1076,29 +1107,289 @@ fn truncate_columns_by_columns(
     let mut available = termwidth - width;
 
     if available > 0 {
-        for i in 0..truncate_pos {
-            let used_width = widths[i];
-            let col_width = widths_original[i];
-            if used_width < col_width {
-                let need = col_width - used_width;
-                let take = min(available, need);
-                available -= take;
+        let consumed = distribute_available_width(
+            &mut widths[..truncate_pos],
+            &widths_original[..truncate_pos],
+            available,
+            width_priority_columns,
+        );
+        available -= consumed;
+        width += consumed;
+    }
 
-                widths[i] += take;
-                width += take;
+    // If not all columns fit and the primary priority is on the right side,
+    // compact columns to the right of it so the priority column can dominate.
+    if truncate_pos < count_columns {
+        if let Some(priority_column) =
+            first_visible_priority_column(width_priority_columns, truncate_pos)
+        {
+            let priority_is_constrained =
+                widths[priority_column] < widths_original[priority_column];
+            let has_columns_on_the_right = truncate_pos > priority_column + 1;
+            let single_priority = width_priority_columns.len() == 1;
+            let force_priority_to_right_edge = priority_column >= truncate_pos / 2;
 
-                if available == 0 {
-                    break;
+            if priority_is_constrained
+                && has_columns_on_the_right
+                && (force_priority_to_right_edge || single_priority)
+            {
+                let mut available = termwidth - width;
+
+                while truncate_pos > priority_column + 1 {
+                    if single_priority && !force_priority_to_right_edge {
+                        let reserve_for_trailing = trailing_column_width + vertical;
+                        let need_for_priority = widths_original[priority_column]
+                            .saturating_sub(widths[priority_column]);
+
+                        if available >= reserve_for_trailing + need_for_priority {
+                            break;
+                        }
+                    }
+
+                    let dropped = widths.pop().expect("ok");
+                    truncate_pos -= 1;
+
+                    let freed = dropped + vertical;
+                    width -= freed;
+                    available += freed;
+                }
+
+                let reserve_for_trailing = trailing_column_width + vertical;
+                if available > reserve_for_trailing {
+                    let mut budget = available - reserve_for_trailing;
+
+                    let allocation_order = build_priority_allocation_order(
+                        width_priority_columns,
+                        truncate_pos,
+                        priority_column,
+                    );
+
+                    let consumed = distribute_available_width_round_robin(
+                        &mut widths[..truncate_pos],
+                        &widths_original[..truncate_pos],
+                        budget,
+                        &allocation_order,
+                    );
+                    width += consumed;
+                    budget -= consumed;
+
+                    if budget > 0 {
+                        let consumed = distribute_available_width(
+                            &mut widths[..truncate_pos],
+                            &widths_original[..truncate_pos],
+                            budget,
+                            &allocation_order,
+                        );
+                        width += consumed;
+                        budget -= consumed;
+                    }
+
+                    if budget > 0 {
+                        widths[priority_column] += budget;
+                        width += budget;
+                    }
                 }
             }
         }
+
+        available = termwidth - width;
     }
 
     if truncate_pos == count_columns {
+        if let Some(priority_column) =
+            first_visible_priority_column(width_priority_columns, truncate_pos)
+        {
+            let priority_is_constrained =
+                widths[priority_column] < widths_original[priority_column];
+            let has_columns_on_the_right = truncate_pos > priority_column + 1;
+
+            if priority_is_constrained && has_columns_on_the_right {
+                let mut available = termwidth - width;
+                // Only force right-edge placement for right-side priorities (ps-like tables).
+                // Left-side priorities (ls-like tables) should keep additional context columns.
+                let force_priority_to_right_edge = priority_column >= truncate_pos / 2;
+
+                loop {
+                    if truncate_pos <= priority_column + 1 {
+                        break;
+                    }
+
+                    if !force_priority_to_right_edge {
+                        let reserve_for_trailing = trailing_column_width + vertical;
+                        let has_budget_for_priority_and_trailing =
+                            if width_priority_columns.len() == 1 {
+                                // For a single explicit priority, keep dropping right-side columns
+                                // until this column can reach its measured width.
+                                let need_for_priority = widths_original[priority_column]
+                                    .saturating_sub(widths[priority_column]);
+                                available >= reserve_for_trailing + need_for_priority
+                            } else {
+                                let max_other_width = widths
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, &col_width)| {
+                                        (i != priority_column).then_some(col_width)
+                                    })
+                                    .max()
+                                    .unwrap_or(0);
+
+                                // Stop dropping right-side columns as soon as we have enough budget
+                                // to keep the trailing marker and later widen the priority column above
+                                // every other visible column.
+                                let need_for_widest =
+                                    (max_other_width + 1).saturating_sub(widths[priority_column]);
+                                available >= reserve_for_trailing + need_for_widest
+                            };
+
+                        if has_budget_for_priority_and_trailing {
+                            break;
+                        }
+                    }
+
+                    let dropped = widths.pop().expect("ok");
+                    truncate_pos -= 1;
+
+                    let freed = dropped + vertical;
+                    width -= freed;
+                    available += freed;
+                }
+
+                let reserve_for_trailing = trailing_column_width + vertical;
+                if available >= reserve_for_trailing {
+                    let budget = available - reserve_for_trailing;
+                    let mut budget = budget;
+
+                    // Keep the primary column at least slightly wider than all others.
+                    let max_other = widths
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &col_width)| (i != priority_column).then_some(col_width))
+                        .max()
+                        .unwrap_or(0);
+
+                    if widths[priority_column] <= max_other && budget > 0 {
+                        let target = max_other + 1;
+                        let need = min(
+                            widths_original[priority_column]
+                                .saturating_sub(widths[priority_column]),
+                            target.saturating_sub(widths[priority_column]),
+                        );
+                        let take = min(budget, need);
+
+                        widths[priority_column] += take;
+                        width += take;
+                        budget -= take;
+                    }
+
+                    if budget > 0 {
+                        // In forced mode, keep the first priority column dominant,
+                        // then allow secondary priorities to widen.
+                        let allocation_order = build_priority_allocation_order(
+                            width_priority_columns,
+                            truncate_pos,
+                            priority_column,
+                        );
+
+                        // First give all priority columns a fair chance to grow.
+                        let consumed = distribute_available_width_round_robin(
+                            &mut widths[..truncate_pos],
+                            &widths_original[..truncate_pos],
+                            budget,
+                            &allocation_order,
+                        );
+                        width += consumed;
+                        budget -= consumed;
+
+                        if budget == 0 {
+                            truncate_rows(data, truncate_pos);
+
+                            push_empty_column(data);
+                            widths.push(trailing_column_width);
+                            width += trailing_column_width + vertical;
+
+                            return WidthEstimation::new(
+                                widths_original,
+                                widths,
+                                width,
+                                true,
+                                true,
+                            );
+                        }
+
+                        let consumed = distribute_available_width(
+                            &mut widths[..truncate_pos],
+                            &widths_original[..truncate_pos],
+                            budget,
+                            &allocation_order,
+                        );
+                        width += consumed;
+                        budget -= consumed;
+
+                        if budget > 0 {
+                            widths[priority_column] += budget;
+                            width += budget;
+                        }
+                    }
+
+                    // If there are explicit secondary priorities, transfer a small amount
+                    // of width from the primary column to them. This keeps the primary
+                    // dominant while making secondary hints visibly effective.
+                    for &secondary in width_priority_columns
+                        .iter()
+                        .filter(|&&column| column < truncate_pos && column != priority_column)
+                    {
+                        let max_other = widths
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, &col_width)| {
+                                (i != priority_column && i != secondary).then_some(col_width)
+                            })
+                            .max()
+                            .unwrap_or(0);
+
+                        // Keep the primary wider than every other visible column.
+                        let headroom_over_others =
+                            widths[priority_column].saturating_sub(max_other + 1);
+                        // Keep the primary wider than this secondary after transfer.
+                        let headroom_over_secondary =
+                            widths[priority_column].saturating_sub(widths[secondary] + 1) / 2;
+                        let transferable = min(
+                            min(headroom_over_others, headroom_over_secondary),
+                            SECONDARY_PRIORITY_BONUS_LIMIT,
+                        );
+
+                        if transferable == 0 {
+                            continue;
+                        }
+
+                        widths[priority_column] -= transferable;
+                        widths[secondary] += transferable;
+                    }
+
+                    truncate_rows(data, truncate_pos);
+
+                    push_empty_column(data);
+                    widths.push(trailing_column_width);
+                    width += trailing_column_width + vertical;
+
+                    return WidthEstimation::new(widths_original, widths, width, true, true);
+                }
+            }
+        }
+
         return WidthEstimation::new(widths_original, widths, width, true, false);
     }
 
     if available >= trailing_column_width + vertical {
+        let extra_budget = available - (trailing_column_width + vertical);
+        let applied = apply_extra_budget_to_visible_columns(
+            &mut widths,
+            extra_budget,
+            width_priority_columns,
+            truncate_pos,
+        );
+        width += applied;
+
         truncate_rows(data, truncate_pos);
 
         push_empty_column(data);
@@ -1116,6 +1407,16 @@ fn truncate_columns_by_columns(
     widths.push(trailing_column_width);
     width += trailing_column_width;
 
+    let extra_budget = termwidth.saturating_sub(width);
+    let last_visible_column = widths.len().saturating_sub(1);
+    let applied = apply_extra_budget_to_visible_columns(
+        &mut widths,
+        extra_budget,
+        width_priority_columns,
+        last_visible_column,
+    );
+    width += applied;
+
     WidthEstimation::new(widths_original, widths, width, true, true)
 }
 
@@ -1126,6 +1427,7 @@ fn truncate_columns_by_head(
     theme: &TableTheme,
     pad: usize,
     termwidth: usize,
+    width_priority_columns: &[usize],
 ) -> WidthEstimation {
     const TRAILING_COLUMN_WIDTH: usize = EMPTY_COLUMN_TEXT_WIDTH;
 
@@ -1169,22 +1471,14 @@ fn truncate_columns_by_head(
     let mut available = termwidth - width;
 
     if available > 0 {
-        for i in 0..truncate_pos {
-            let used_width = widths[i];
-            let col_width = widths_original[i];
-            if used_width < col_width {
-                let need = col_width - used_width;
-                let take = min(available, need);
-                available -= take;
-
-                widths[i] += take;
-                width += take;
-
-                if available == 0 {
-                    break;
-                }
-            }
-        }
+        let consumed = distribute_available_width(
+            &mut widths[..truncate_pos],
+            &widths_original[..truncate_pos],
+            available,
+            width_priority_columns,
+        );
+        available -= consumed;
+        width += consumed;
     }
 
     if truncate_pos == count_columns {
@@ -1255,6 +1549,136 @@ fn push_empty_column(data: &mut Vec<Vec<NuRecordsValue>>) {
     for row in data {
         row.push(empty_cell.clone());
     }
+}
+
+fn first_visible_priority_column(
+    width_priority_columns: &[usize],
+    visible_columns: usize,
+) -> Option<usize> {
+    // Width priorities are ordered; the first visible one is treated as primary.
+    width_priority_columns
+        .iter()
+        .copied()
+        .find(|&column| column < visible_columns)
+}
+
+fn build_priority_allocation_order(
+    width_priority_columns: &[usize],
+    visible_columns: usize,
+    primary_priority_column: usize,
+) -> Vec<usize> {
+    // Keep the primary priority first, then retain the caller-provided order
+    // for secondary priorities that are currently visible.
+    let mut allocation_order = vec![primary_priority_column];
+    allocation_order.extend(
+        width_priority_columns
+            .iter()
+            .copied()
+            .filter(|&column| column < visible_columns && column != primary_priority_column),
+    );
+    allocation_order
+}
+
+fn apply_extra_budget_to_visible_columns(
+    widths: &mut [usize],
+    extra_budget: usize,
+    width_priority_columns: &[usize],
+    visible_columns: usize,
+) -> usize {
+    // Any leftover width is intentionally biased toward priority columns,
+    // with a fallback to the last visible data column.
+    if extra_budget == 0 || width_priority_columns.is_empty() {
+        return 0;
+    }
+
+    if let Some(priority_column) =
+        first_visible_priority_column(width_priority_columns, visible_columns)
+    {
+        widths[priority_column] += extra_budget;
+        return extra_budget;
+    }
+
+    if visible_columns > 0 {
+        widths[visible_columns - 1] += extra_budget;
+        return extra_budget;
+    }
+
+    0
+}
+
+fn distribute_available_width(
+    widths: &mut [usize],
+    widths_original: &[usize],
+    available: usize,
+    width_priority_columns: &[usize],
+) -> usize {
+    let initial_available = available;
+    let mut available = available;
+
+    // First pass: give every explicitly-prioritized column a chance to grow.
+    let consumed = distribute_available_width_round_robin(
+        widths,
+        widths_original,
+        available,
+        width_priority_columns,
+    );
+    available -= consumed;
+
+    // Second pass: preserve existing behavior for all columns.
+    for i in 0..widths.len() {
+        if available == 0 {
+            break;
+        }
+
+        let used_width = widths[i];
+        let col_width = widths_original[i];
+        if used_width < col_width {
+            let need = col_width - used_width;
+            let take = min(available, need);
+            widths[i] += take;
+            available -= take;
+        }
+    }
+
+    initial_available - available
+}
+
+fn distribute_available_width_round_robin(
+    widths: &mut [usize],
+    widths_original: &[usize],
+    available: usize,
+    width_priority_columns: &[usize],
+) -> usize {
+    let initial_available = available;
+    let mut available = available;
+
+    while available > 0 {
+        let mut consumed_in_round = 0;
+
+        for &column in width_priority_columns {
+            if available == 0 {
+                break;
+            }
+
+            if column >= widths.len() {
+                continue;
+            }
+
+            let used_width = widths[column];
+            let col_width = widths_original[column];
+            if used_width < col_width {
+                widths[column] += 1;
+                available -= 1;
+                consumed_in_round += 1;
+            }
+        }
+
+        if consumed_in_round == 0 {
+            break;
+        }
+    }
+
+    initial_available - available
 }
 
 fn duplicate_row(data: &mut Vec<Vec<NuRecordsValue>>, row: usize) {

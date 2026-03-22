@@ -230,12 +230,7 @@ impl Command for Ls {
                     .into_pipeline_data_with_metadata(
                         call_span,
                         engine_state.signals().clone(),
-                        PipelineMetadata {
-                            #[allow(deprecated)]
-                            data_source: DataSource::Ls,
-                            path_columns: vec!["name".to_string()],
-                            ..Default::default()
-                        },
+                        ls_pipeline_metadata(call_span, long),
                     ),
             ),
             Some(pattern) => {
@@ -257,12 +252,7 @@ impl Command for Ls {
                     .into_pipeline_data_with_metadata(
                         call_span,
                         engine_state.signals().clone(),
-                        PipelineMetadata {
-                            #[allow(deprecated)]
-                            data_source: DataSource::Ls,
-                            path_columns: vec!["name".to_string()],
-                            ..Default::default()
-                        },
+                        ls_pipeline_metadata(call_span, long),
                     ))
             }
         }
@@ -322,6 +312,22 @@ impl Command for Ls {
             },
         ]
     }
+}
+
+fn ls_pipeline_metadata(span: Span, long: bool) -> PipelineMetadata {
+    let mut metadata = PipelineMetadata {
+        #[allow(deprecated)]
+        data_source: DataSource::Ls,
+        path_columns: vec!["name".to_string()],
+        ..Default::default()
+    };
+
+    // Keep long listings close to legacy layout; priority hints are most useful in compact views.
+    if !long {
+        metadata.set_table_width_priority_columns(span, ["name"]);
+    }
+
+    metadata
 }
 
 fn ls_for_one_pattern(
