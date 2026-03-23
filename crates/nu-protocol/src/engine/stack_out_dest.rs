@@ -1,4 +1,4 @@
-use crate::{OutDest, engine::Stack};
+use crate::{OutDest, Value, engine::Stack};
 use std::{
     fs::File,
     mem,
@@ -57,6 +57,16 @@ pub(crate) struct StackOutDest {
     ///
     /// This should only ever be `File` or `Inherit`.
     pub parent_stderr: Option<OutDest>,
+    /// The previous pipe stdout removed for the current call.
+    ///
+    /// This lets commands detect when they are in a non-final semicolon pipeline inside a caller
+    /// that requested piped stdout.
+    pub removed_pipe_stdout: Option<OutDest>,
+    /// Values captured from semicolon-drained pipelines for command-specific forwarding.
+    ///
+    /// This is transient per evaluation context and should not be propagated when creating a fresh
+    /// child evaluation stack.
+    pub semicolon_drained_values: Vec<Value>,
 }
 
 impl StackOutDest {
@@ -68,6 +78,8 @@ impl StackOutDest {
             stderr: OutDest::Inherit,
             parent_stdout: None,
             parent_stderr: None,
+            removed_pipe_stdout: None,
+            semicolon_drained_values: vec![],
         }
     }
 
@@ -98,6 +110,20 @@ impl StackOutDest {
         let stderr = mem::replace(&mut self.stderr, stderr);
         self.parent_stderr.replace(stderr)
     }
+
+    pub(crate) fn push_semicolon_drained_value(&mut self, value: Value) {
+        self.semicolon_drained_values.push(value);
+    }
+
+    pub(crate) fn take_semicolon_drained_values(&mut self) -> Vec<Value> {
+        mem::take(&mut self.semicolon_drained_values)
+    }
+
+    pub(crate) fn clone_with_empty_semicolon_values(&self) -> Self {
+        let mut cloned = self.clone();
+        cloned.semicolon_drained_values.clear();
+        cloned
+    }
 }
 
 pub struct StackIoGuard<'a> {
@@ -106,6 +132,7 @@ pub struct StackIoGuard<'a> {
     old_pipe_stderr: Option<OutDest>,
     old_parent_stdout: Option<OutDest>,
     old_parent_stderr: Option<OutDest>,
+    old_removed_pipe_stdout: Option<OutDest>,
 }
 
 impl<'a> StackIoGuard<'a> {
@@ -115,20 +142,27 @@ impl<'a> StackIoGuard<'a> {
         stderr: Option<Redirection>,
     ) -> Self {
         let out_dest = &mut stack.out_dest;
+        let old_removed_pipe_stdout = out_dest.removed_pipe_stdout.take();
 
         let (old_pipe_stdout, old_parent_stdout) = match stdout {
             Some(Redirection::Pipe(stdout)) => {
                 let old = out_dest.pipe_stdout.replace(stdout);
+                out_dest.removed_pipe_stdout = None;
                 (old, out_dest.parent_stdout.take())
             }
             Some(Redirection::File(file)) => {
                 let file = OutDest::from(file);
+                out_dest.removed_pipe_stdout = None;
                 (
                     out_dest.pipe_stdout.replace(file.clone()),
                     out_dest.push_stdout(file),
                 )
             }
-            None => (out_dest.pipe_stdout.take(), out_dest.parent_stdout.take()),
+            None => {
+                let old = out_dest.pipe_stdout.take();
+                out_dest.removed_pipe_stdout = old.clone();
+                (old, out_dest.parent_stdout.take())
+            }
         };
 
         let (old_pipe_stderr, old_parent_stderr) = match stderr {
@@ -149,6 +183,7 @@ impl<'a> StackIoGuard<'a> {
             old_parent_stdout,
             old_pipe_stderr,
             old_parent_stderr,
+            old_removed_pipe_stdout,
         }
     }
 }
@@ -181,6 +216,7 @@ impl Drop for StackIoGuard<'_> {
         if let Some(stderr) = mem::replace(&mut self.out_dest.parent_stderr, old_stderr) {
             self.out_dest.stderr = stderr;
         }
+        self.out_dest.removed_pipe_stdout = self.old_removed_pipe_stdout.take();
     }
 }
 
@@ -188,16 +224,22 @@ pub struct StackCollectValueGuard<'a> {
     stack: &'a mut Stack,
     old_pipe_stdout: Option<OutDest>,
     old_pipe_stderr: Option<OutDest>,
+    old_removed_pipe_stdout: Option<OutDest>,
+    old_semicolon_drained_values: Vec<Value>,
 }
 
 impl<'a> StackCollectValueGuard<'a> {
     pub(crate) fn new(stack: &'a mut Stack) -> Self {
         let old_pipe_stdout = stack.out_dest.pipe_stdout.replace(OutDest::Value);
         let old_pipe_stderr = stack.out_dest.pipe_stderr.take();
+        let old_removed_pipe_stdout = stack.out_dest.removed_pipe_stdout.take();
+        let old_semicolon_drained_values = stack.out_dest.take_semicolon_drained_values();
         Self {
             stack,
             old_pipe_stdout,
             old_pipe_stderr,
+            old_removed_pipe_stdout,
+            old_semicolon_drained_values,
         }
     }
 }
@@ -220,6 +262,8 @@ impl Drop for StackCollectValueGuard<'_> {
     fn drop(&mut self) {
         self.out_dest.pipe_stdout = self.old_pipe_stdout.take();
         self.out_dest.pipe_stderr = self.old_pipe_stderr.take();
+        self.out_dest.removed_pipe_stdout = self.old_removed_pipe_stdout.take();
+        self.out_dest.semicolon_drained_values = mem::take(&mut self.old_semicolon_drained_values);
     }
 }
 
@@ -229,12 +273,16 @@ pub struct StackCallArgGuard<'a> {
     old_pipe_stderr: Option<OutDest>,
     old_stdout: Option<OutDest>,
     old_stderr: Option<OutDest>,
+    old_removed_pipe_stdout: Option<OutDest>,
+    old_semicolon_drained_values: Vec<Value>,
 }
 
 impl<'a> StackCallArgGuard<'a> {
     pub(crate) fn new(stack: &'a mut Stack) -> Self {
         let old_pipe_stdout = stack.out_dest.pipe_stdout.replace(OutDest::Value);
         let old_pipe_stderr = stack.out_dest.pipe_stderr.take();
+        let old_removed_pipe_stdout = stack.out_dest.removed_pipe_stdout.take();
+        let old_semicolon_drained_values = stack.out_dest.take_semicolon_drained_values();
 
         let old_stdout = stack
             .out_dest
@@ -254,6 +302,8 @@ impl<'a> StackCallArgGuard<'a> {
             old_pipe_stderr,
             old_stdout,
             old_stderr,
+            old_removed_pipe_stdout,
+            old_semicolon_drained_values,
         }
     }
 }
@@ -276,6 +326,8 @@ impl Drop for StackCallArgGuard<'_> {
     fn drop(&mut self) {
         self.out_dest.pipe_stdout = self.old_pipe_stdout.take();
         self.out_dest.pipe_stderr = self.old_pipe_stderr.take();
+        self.out_dest.removed_pipe_stdout = self.old_removed_pipe_stdout.take();
+        self.out_dest.semicolon_drained_values = mem::take(&mut self.old_semicolon_drained_values);
         if let Some(stdout) = self.old_stdout.take() {
             self.out_dest.push_stdout(stdout);
         }

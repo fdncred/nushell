@@ -110,7 +110,7 @@ impl Stack {
             parent_deletions: vec![],
             deletions: vec![],
             config: parent.config.clone(),
-            out_dest: parent.out_dest.clone(),
+            out_dest: parent.out_dest.clone_with_empty_semicolon_values(),
             parent_stack: Some(parent),
         }
     }
@@ -336,7 +336,7 @@ impl Stack {
             parent_deletions: vec![],
             deletions: vec![],
             config: self.config.clone(),
-            out_dest: self.out_dest.clone(),
+            out_dest: self.out_dest.clone_with_empty_semicolon_values(),
         }
     }
 
@@ -371,8 +371,18 @@ impl Stack {
             parent_deletions: vec![],
             deletions: vec![],
             config: self.config.clone(),
-            out_dest: self.out_dest.clone(),
+            out_dest: self.out_dest.clone_with_empty_semicolon_values(),
         }
+    }
+
+    /// Add a value captured from a drained non-final pipeline.
+    pub fn push_semicolon_drained_value(&mut self, value: Value) {
+        self.out_dest.push_semicolon_drained_value(value);
+    }
+
+    /// Take and clear all values captured from drained non-final pipelines.
+    pub fn take_semicolon_drained_values(&mut self) -> Vec<Value> {
+        self.out_dest.take_semicolon_drained_values()
     }
 
     /// Flatten the env var scope frames into one frame
@@ -649,6 +659,11 @@ impl Stack {
     /// Returns the [`OutDest`] of the pipe redirection applied to the current command's stdout.
     pub fn pipe_stdout(&self) -> Option<&OutDest> {
         self.out_dest.pipe_stdout.as_ref()
+    }
+
+    /// Returns the pipe stdout redirection that was removed for the current call, if any.
+    pub fn removed_pipe_stdout(&self) -> Option<&OutDest> {
+        self.out_dest.removed_pipe_stdout.as_ref()
     }
 
     /// Returns the [`OutDest`] of the pipe redirection applied to the current command's stderr.

@@ -151,12 +151,13 @@ pub fn eval_call<D: DebugContext>(
         let result =
             eval_block_with_early_return::<D>(engine_state, &mut callee_stack, block, input)
                 .map(|p| p.body);
+        let drained = callee_stack.take_semicolon_drained_values();
 
         if block.redirect_env {
             redirect_env(engine_state, caller_stack, &callee_stack);
         }
 
-        result
+        merge_semicolon_drained_values(result?, drained, call.head)
     } else {
         // We pass caller_stack here with the knowledge that internal commands
         // are going to be specifically looking for global state in the stack
@@ -185,6 +186,31 @@ pub fn redirect_env(engine_state: &EngineState, caller_stack: &mut Stack, callee
 
     // set config to callee config, to capture any updates to that
     caller_stack.config.clone_from(&callee_stack.config);
+}
+
+pub(crate) fn merge_semicolon_drained_values(
+    result: PipelineData,
+    mut drained: Vec<Value>,
+    fallback_span: Span,
+) -> Result<PipelineData, ShellError> {
+    if drained.is_empty() {
+        return Ok(result);
+    }
+
+    if !result.is_nothing() {
+        let span = result.span().unwrap_or(fallback_span);
+        drained.push(result.into_value(span)?);
+    }
+
+    let span = drained.first().map(|value| value.span()).unwrap_or(fallback_span);
+    if drained.len() == 1 {
+        Ok(drained
+            .pop()
+            .map(Value::into_pipeline_data)
+            .unwrap_or_else(PipelineData::empty))
+    } else {
+        Ok(Value::list(drained, span).into_pipeline_data())
+    }
 }
 
 fn eval_external(

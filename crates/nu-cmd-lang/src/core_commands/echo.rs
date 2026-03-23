@@ -1,4 +1,6 @@
 use nu_engine::command_prelude::*;
+use nu_protocol::OutDest;
+use std::io::Write;
 
 #[derive(Clone)]
 pub struct Echo;
@@ -9,7 +11,7 @@ impl Command for Echo {
     }
 
     fn description(&self) -> &str {
-        "Returns its arguments, ignoring the piped-in value."
+        "Prints its arguments like `print`, while still supporting pipes and redirection."
     }
 
     fn signature(&self) -> Signature {
@@ -20,11 +22,13 @@ impl Command for Echo {
     }
 
     fn extra_description(&self) -> &str {
-        "Unlike `print`, which prints unstructured text to stdout, `echo` is like an
-identity function and simply returns its arguments. When given no arguments,
-it returns an empty string. When given one argument, it returns it as a
-nushell value. Otherwise, it returns a list of the arguments. There is usually
-little reason to use this over just writing the values as-is."
+        "At runtime, `echo` drains output according to Nushell's redirection mode.
+This means it prints immediately in normal command position (like `print`),
+but still feeds values into a pipe (`|`) or file redirection (`o>`, `o+e>`, etc.).
+
+When evaluated in a value-collection context (such as const evaluation),
+it keeps value semantics: no args produce an empty string, one arg returns
+that value, and multiple args return a list."
     }
 
     fn run(
@@ -35,7 +39,23 @@ little reason to use this over just writing the values as-is."
         _input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let args = call.rest(engine_state, stack, 0)?;
-        echo_impl(args, call.head)
+        if matches!(
+            stack.pipe_stdout(),
+            Some(OutDest::Pipe | OutDest::PipeSeparate | OutDest::Value)
+        ) {
+            return echo_impl(args, call.head);
+        }
+        if matches!(
+            stack.removed_pipe_stdout(),
+            Some(OutDest::Pipe | OutDest::PipeSeparate | OutDest::Value)
+        ) {
+            let value = echo_impl(args, call.head)?.into_value(call.head)?;
+            stack.push_semicolon_drained_value(value);
+            return Ok(PipelineData::empty());
+        }
+
+        echo_print_like(args, call.head, engine_state, stack)?;
+        Ok(PipelineData::empty())
     }
 
     fn run_const(
@@ -78,6 +98,53 @@ fn echo_impl(mut args: Vec<Value>, head: Span) -> Result<PipelineData, ShellErro
         _ => Value::list(args, head),
     };
     Ok(value.into_pipeline_data())
+}
+
+fn echo_print_like(
+    args: Vec<Value>,
+    head: Span,
+    engine_state: &EngineState,
+    stack: &mut Stack,
+) -> Result<(), ShellError> {
+    let values = if args.is_empty() {
+        vec![Value::string("", head)]
+    } else {
+        args
+    };
+
+    match stack.stdout() {
+        OutDest::Pipe | OutDest::PipeSeparate | OutDest::Value => Ok(()),
+        OutDest::Print | OutDest::Inherit => {
+            for value in values {
+                value
+                    .into_pipeline_data()
+                    .print_table(engine_state, stack, false, false)?;
+            }
+            Ok(())
+        }
+        OutDest::File(file) => {
+            let config = engine_state.get_config();
+            let mut writer = file.as_ref();
+            for value in values {
+                if let Value::Error { error, .. } = value {
+                    return Err(*error);
+                }
+
+                let mut out = value.to_expanded_string("\n", config);
+                out.push('\n');
+                writer
+                    .write_all(out.as_bytes())
+                    .map_err(|err| ShellError::Io(IoError::new_internal(err, "write failed")))?;
+            }
+            writer
+                .flush()
+                .map_err(|err| ShellError::Io(IoError::new_internal(err, "flush failed")))?;
+            Ok(())
+        }
+        OutDest::Null => {
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

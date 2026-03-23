@@ -20,7 +20,9 @@ use nu_protocol::{
 use nu_utils::IgnoreCaseExt;
 
 use crate::{
-    ENV_CONVERSIONS, convert_env_vars, eval::is_automatic_env_var, eval_block_with_early_return,
+    ENV_CONVERSIONS, convert_env_vars,
+    eval::{is_automatic_env_var, merge_semicolon_drained_values},
+    eval_block_with_early_return,
 };
 
 pub fn eval_ir_block<D: DebugContext>(
@@ -1210,13 +1212,15 @@ fn eval_call<D: DebugContext>(
             let result =
                 eval_block_with_early_return::<D>(engine_state, &mut callee_stack, block, input)
                     .map(|p| p.body);
+            let drained = callee_stack.take_semicolon_drained_values();
+            let result = merge_semicolon_drained_values(result?, drained, head)?;
 
             // Move environment variables back into the caller stack scope if requested to do so
             if block.redirect_env {
                 redirect_env(engine_state, &mut caller_stack, &callee_stack);
             }
 
-            result
+            Ok(result)
         } else {
             check_input_types(&input, &decl.signature(), head)?;
             // FIXME: precalculate this and save it somewhere
