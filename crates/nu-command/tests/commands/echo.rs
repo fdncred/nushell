@@ -81,7 +81,7 @@ fn echo_def_redirects_all_values() -> Result {
     test()
         .cwd(&dir)
         .run(
-            r#"
+            "
         def test [] {
             echo 1
             echo 2
@@ -89,7 +89,7 @@ fn echo_def_redirects_all_values() -> Result {
         }
         test o> out.txt
         open --raw out.txt
-        "#,
+        ",
         )
         .expect_value_eq("1\n2\n3\n")
 }
@@ -100,7 +100,7 @@ fn echo_def_pipe_to_save_redirects_all_values() -> Result {
     test()
         .cwd(&dir)
         .run(
-            r#"
+            "
         def test [] {
             echo 1
             echo 2
@@ -108,7 +108,7 @@ fn echo_def_pipe_to_save_redirects_all_values() -> Result {
         }
         test | save out.txt
         open --raw out.txt
-        "#,
+        ",
         )
         .expect_value_eq("1\n2\n3\n")
 }
