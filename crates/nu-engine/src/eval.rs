@@ -202,7 +202,10 @@ pub(crate) fn merge_semicolon_drained_values(
         drained.push(result.into_value(span)?);
     }
 
-    let span = drained.first().map(|value| value.span()).unwrap_or(fallback_span);
+    let span = drained
+        .first()
+        .map(|value| value.span())
+        .unwrap_or(fallback_span);
     if drained.len() == 1 {
         Ok(drained
             .pop()

@@ -1,6 +1,6 @@
+use nu_path::AbsolutePathBuf;
 use nu_test_support::fs::file_contents;
 use nu_test_support::prelude::*;
-use nu_path::AbsolutePathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_test_dir(prefix: &str) -> AbsolutePathBuf {
@@ -78,8 +78,10 @@ fn echo_outerr_redirection_writes_file() -> Result {
 #[test]
 fn echo_def_redirects_all_values() -> Result {
     let dir = temp_test_dir("echo_def_redirects");
-    test().cwd(&dir).run(
-        r#"
+    test()
+        .cwd(&dir)
+        .run(
+            r#"
         def test [] {
             echo 1
             echo 2
@@ -88,15 +90,17 @@ fn echo_def_redirects_all_values() -> Result {
         test o> out.txt
         open --raw out.txt
         "#,
-    )
-    .expect_value_eq("1\n2\n3\n")
+        )
+        .expect_value_eq("1\n2\n3\n")
 }
 
 #[test]
 fn echo_def_pipe_to_save_redirects_all_values() -> Result {
     let dir = temp_test_dir("echo_def_pipe_save");
-    test().cwd(&dir).run(
-        r#"
+    test()
+        .cwd(&dir)
+        .run(
+            r#"
         def test [] {
             echo 1
             echo 2
@@ -105,6 +109,6 @@ fn echo_def_pipe_to_save_redirects_all_values() -> Result {
         test | save out.txt
         open --raw out.txt
         "#,
-    )
-    .expect_value_eq("1\n2\n3\n")
+        )
+        .expect_value_eq("1\n2\n3\n")
 }

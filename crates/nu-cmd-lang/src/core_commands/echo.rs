@@ -141,9 +141,7 @@ fn echo_print_like(
                 .map_err(|err| ShellError::Io(IoError::new_internal(err, "flush failed")))?;
             Ok(())
         }
-        OutDest::Null => {
-            Ok(())
-        }
+        OutDest::Null => Ok(()),
     }
 }
 
