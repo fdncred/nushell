@@ -265,6 +265,11 @@ pub fn add_shell_command_context(mut engine_state: EngineState) -> EngineState {
             };
         }
 
+        #[cfg(all(feature = "os", not(target_arch = "wasm32")))]
+        bind_command! {
+            SkimCommand,
+        };
+
         #[cfg(feature = "os")]
         bind_command! {
             Clear,
