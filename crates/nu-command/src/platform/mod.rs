@@ -5,8 +5,6 @@ mod dir_info;
 mod input;
 mod is_terminal;
 mod kill;
-#[cfg(not(target_arch = "wasm32"))]
-mod skim;
 mod sleep;
 mod term;
 #[cfg(unix)]
@@ -22,10 +20,10 @@ pub use dir_info::{DirBuilder, DirInfo, FileInfo};
 pub use input::Input;
 pub use input::InputList;
 pub use input::InputListen;
+#[cfg(not(target_arch = "wasm32"))]
+pub use input::SkimCommand;
 pub use is_terminal::IsTerminal;
 pub use kill::Kill;
-#[cfg(not(target_arch = "wasm32"))]
-pub use skim::SkimCommand;
 pub use sleep::Sleep;
 pub use term::{Term, TermQuery, TermSize};
 #[cfg(unix)]
