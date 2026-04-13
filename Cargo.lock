@@ -4660,6 +4660,7 @@ dependencies = [
  "ratatui",
  "rayon",
  "reedline",
+ "regex",
  "rmp",
  "roxmltree",
  "rstest",

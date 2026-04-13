@@ -65,10 +65,10 @@ pub(crate) fn preview_skim_item_with_closure(
         let preview_data = preview.run_with_value(value.clone())?;
         let preview_value = preview_data.into_value(value.span())?;
 
-        if let Ok(preview_string) = preview_value.clone().coerce_string() {
-            if !preview_string.is_empty() {
-                return Ok(Some(preview_string));
-            }
+        if let Ok(preview_string) = preview_value.clone().coerce_string()
+            && !preview_string.is_empty()
+        {
+            return Ok(Some(preview_string));
         }
 
         if let Some(table_decl_id) = engine_state.find_decl("table".as_bytes(), &[]) {

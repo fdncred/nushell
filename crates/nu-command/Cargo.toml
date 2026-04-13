@@ -96,6 +96,7 @@ rand = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true }
 ratatui = { workspace = true }
 rayon = { workspace = true }
+regex = { workspace = true }
 reedline = { workspace = true, optional = true }
 roxmltree = { workspace = true }
 rusqlite = { workspace = true, features = [

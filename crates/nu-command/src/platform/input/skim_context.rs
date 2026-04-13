@@ -65,9 +65,9 @@ impl MapperFlag {
         match self {
             MapperFlag::None => Cow::Borrowed(value),
             MapperFlag::Closure(closure) => {
-                let mut stack = (*context.stack).clone();
+                let stack = (*context.stack).clone();
                 let mut eval =
-                    ClosureEval::new(&context.engine_state, &mut stack, closure.item.clone());
+                    ClosureEval::new(&context.engine_state, &stack, closure.item.clone());
                 match eval.run_with_value(value.clone()) {
                     Ok(PipelineData::Empty) => Cow::Owned(Value::nothing(closure.span)),
                     Ok(PipelineData::Value(value, _)) => Cow::Owned(value),
@@ -187,15 +187,13 @@ impl Selector for PredicateBasedSelector {
             return false;
         };
 
-        let mut stack = (*self.stack).clone();
-        let mut eval =
-            ClosureEval::new(&self.engine_state, &mut stack, self.predicate.item.clone());
+        let stack = (*self.stack).clone();
+        let mut eval = ClosureEval::new(&self.engine_state, &stack, self.predicate.item.clone());
         let result = eval.run_with_value(value);
-        let result = match result {
+        match result {
             Ok(PipelineData::Value(value, _)) => value.is_true(),
             _ => false,
-        };
-        result
+        }
     }
 }
 
@@ -226,16 +224,15 @@ impl CommandCollector for NuCommandCollector {
 
         std::thread::spawn(move || {
             components_to_stop.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let mut stack = (*context.stack).clone();
-            let mut eval =
-                ClosureEval::new(&context.engine_state, &mut stack, closure.item.clone());
+            let stack = (*context.stack).clone();
+            let mut eval = ClosureEval::new(&context.engine_state, &stack, closure.item.clone());
             let output = eval.run_with_value(Value::string(cmd, closure.span));
 
             match output {
                 Ok(PipelineData::ByteStream(stream, _)) => {
                     let span = stream.span();
                     if let Some(lines) = stream.lines() {
-                        for (_index, line) in lines.enumerate() {
+                        for line in lines {
                             if rx_interrupt.try_recv().is_ok() {
                                 break;
                             }
@@ -258,7 +255,7 @@ impl CommandCollector for NuCommandCollector {
                     }
                 }
                 Ok(output) => {
-                    let values: Vec<Value> = output.into_iter().collect();
+                    let values = output.into_iter().collect::<Vec<Value>>();
                     for value in values.into_iter() {
                         if rx_interrupt.try_recv().is_ok() {
                             break;

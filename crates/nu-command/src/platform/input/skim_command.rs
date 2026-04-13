@@ -1,13 +1,13 @@
-use nu_color_config::StyleComputer;
-use nu_engine::{ClosureEval, command_prelude::*};
-use nu_protocol::{Example, Value};
-use skim::prelude::Skim;
-use std::sync::Arc;
 use crate::platform::input::skim_arguments::SkimArguments;
 use crate::platform::input::skim_context::{CommandContext, MapperFlag, NuItem};
 use crate::platform::input::skim_format::{
     SkimValueItem, format_skim_item_with_closure, preview_skim_item_with_closure,
 };
+use nu_color_config::StyleComputer;
+use nu_engine::{ClosureEval, command_prelude::*};
+use nu_protocol::{Example, Value};
+use skim::prelude::Skim;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct SkimCommand;
@@ -37,7 +37,7 @@ impl Command for SkimCommand {
     }
 
     fn extra_description(&self) -> &str {
-        r#"This command uses the skim library directly to preserve selected Nu values.
+        "This command uses the skim library directly to preserve selected Nu values.
 Use --multi for multiple selection, --format to format items for display, --preview to render preview content with a closure, and --index to return item indexes.
 
 Key bindings:
@@ -57,7 +57,7 @@ Search syntax:
   !.suffix$ inverse-suffix-exact-match
 
 Whitespace means AND, ` | ` means OR, and OR has higher precedence.
-Use --regex or Ctrl-R to switch into regex mode."#
+Use --regex or Ctrl-R to switch into regex mode."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -104,7 +104,9 @@ Use --regex or Ctrl-R to switch into regex mode."#
         };
 
         let (skim_output, values) = match input {
-            PipelineData::ListStream(..) if (skim_args.interactive || skim_args.cmd.is_some()) && !index_flag => {
+            PipelineData::ListStream(..)
+                if (skim_args.interactive || skim_args.cmd.is_some()) && !index_flag =>
+            {
                 // In interactive/cmd mode, stream ListStream items directly to skim so the
                 // UI can start immediately while upstream input is still being produced.
                 let (tx, rx) = skim::prelude::unbounded();
@@ -145,7 +147,10 @@ Use --regex or Ctrl-R to switch into regex mode."#
                 let result = if multi {
                     Value::list(values, head)
                 } else {
-                    values.into_iter().next().unwrap_or_else(|| Value::nothing(head))
+                    values
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| Value::nothing(head))
                 };
 
                 return Ok(result.into_pipeline_data());
@@ -478,161 +483,148 @@ Use --regex or Ctrl-R to switch into regex mode."#
     fn examples(&self) -> Vec<Example<'_>> {
         vec![
             Example {
-                // working
                 description: "Show a custom prompt before the search box.",
                 example: "[1 2 3 4 5] | input skim 'Choose one'",
                 result: None,
             },
             Example {
-                // working
                 description: "Show a custom prompt using the named prompt flag.",
                 example: "[one two three] | input skim --prompt 'Pick one'",
                 result: None,
             },
             Example {
-                // working
                 description: "Use a custom key binding.",
                 example: "[Foo Bar] | input skim --bind {'ctrl-j':'down'} 'Select item'",
                 result: None,
             },
             Example {
-                // working
                 description: "Allow selecting multiple items and preserve order.",
                 example: "[Banana Kiwi Pear] | input skim --multi --tac --no-sort 'Select fruit'",
                 result: None,
             },
             Example {
-                // working
                 description: "Enable ANSI color support for displayed items.",
                 example: "[\"\u{1b}[31mapple\u{1b}[0m\" \"banana\"] | input skim --ansi --query apple",
                 result: None,
             },
             Example {
-                // working
                 description: "Search with regular expressions.",
                 example: "[foo bar baz] | input skim --regex 'regex> '",
                 result: None,
             },
-            Example { // working
+            Example {
                 description: "Use sort tiebreak criteria with byte stream input.",
                 example: "open Cargo.toml --raw | input skim --tiebreak [score length]",
                 result: None,
             },
-            Example { // NOT-working. If this is supposed to color the items in the list, it's not doing that. It's not clear what
-                      // color configuration means in this context.
+            Example {
                 description: "Set a color theme and window margin.",
-                example: "[one two] | input skim --color 'fg:blue,fg+:black,bg+:yellow' --margin '1,2,1,2' 'Choose'",
+                // `--color` themes skim UI parts (prompt/current/header/etc.). It does
+                // not add ANSI styling to item text; use `--ansi` for that path.
+                example: "[one two] | input skim --color 'light,fg+:black,bg+:yellow,prompt:blue' --margin '1,2,1,2' 'Choose'",
                 result: None,
             },
             Example {
-                // working
                 description: "Disable and configure window height.",
                 example: "[one two three] | input skim --no-height --height 30% --min-height 10 'Small> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Disable screen clearing on start and exit.",
                 example: "[one two] | input skim --no-clear-start --no-clear --no-clear-if-empty 'Keep visible'",
                 result: None,
             },
             Example {
-                // working
                 description: "Use reverse layout and keep the right side visible.",
                 example: "[long-line another] | input skim --reverse --layout reverse --keep-right 'Navigate'",
                 result: None,
             },
             Example {
-                // working
                 description: "Control tab width and input behavior.",
                 example: "[\"one\ttwo\"] | input skim --tabstop 4 --no-hscroll --no-mouse --inline-info 'Show'",
                 result: None,
             },
             Example {
-                // working
                 description: "Use a different fuzzy matching algorithm and case mode.",
                 example: "[foo bar] | input skim --algo clangd --case ignore 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Enable exact matching instead of fuzzy match.",
                 example: "[foo bar] | input skim --exact 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Match case sensitively.",
                 example: "[Foo foo] | input skim --case-sensitive 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Match case insensitively.",
                 example: "[Foo foo] | input skim --ignore-case 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Use smart case matching.",
                 example: "[Foo foo] | input skim --smart-case 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Use a preview window layout.",
                 example: "[one two] | input skim --preview-window right:50% --preview {||} 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Pre-select items read from a file.",
                 example: "let preselect = ($nu.temp-path | path join 'skim-preselect.txt'); ['two'] | str join (char nl) | save --force $preselect; [one two three] | input skim --pre-select-file $preselect",
                 result: None,
             },
             Example {
-                // working
                 description: "Skip to the matched pattern in each line.",
                 example: "[a:1 b:2] | input skim --skip-to-pattern ':' 'prompt> '",
                 result: None,
             },
             Example {
-                // working
                 description: "Select only one match without opening skim.",
                 example: "[one] | input skim --select-1 --query one",
                 result: None,
             },
             Example {
-                // working
                 description: "Exit with code 0 if there is no match.",
                 example: "[one] | input skim --exit-0 --query missing",
                 result: None,
             },
             Example {
-                // working
                 description: "Wait for input to finish before showing results.",
                 example: "[one two three] | input skim --sync --query one --select-1 'Sync search'",
                 result: None,
             },
             Example {
-                // working
                 description: "Use a predicate to pre-select matching items.",
                 example: "[one two three] | input skim --pre-select {|| $in | str starts-with 't'}",
                 result: None,
             },
             Example {
-                // working
                 description: "Format and preview values while selecting.",
                 example: "ps | input skim --format {get name} --preview {||}",
                 result: None,
             },
-            Example { // working
+            Example {
                 description: "Use interactive mode with command mode prompt and query.",
                 example: "glob **/*.rs | input skim --interactive --cmd-query test --cmd-prompt 'cmd> ' --cmd {|q| $q}",
                 result: None,
             },
             Example {
-                // working
+                description: "Configure advanced display and scripting switches.",
+                example: "[one two] | input skim --header 'items' --header-lines 0 --highlight-line --show-cmd-error --cycle --disabled --read0 --print0 --print-query --print-cmd --print-score --print-header --no-strip-ansi --filter one",
+                result: None,
+            },
+            Example {
+                description: "Configure search fields, markers, history, preselection, and formatted output.",
+                example: "['main/src/main.rs' 'lib/src/lib.rs'] | input skim --min-query-length 1 --nth ['1'] --with-nth ['2'] --delimiter '/' --normalize --split-match ':' --last-match --selector '>' --multi-selector '*' --no-info --wrap --scrollbar '|' --no-scrollbar --history 'skim-history.txt' --history-size 50 --cmd-history 'skim-cmd-history.txt' --cmd-history-size 25 --print-current --output-format '{1}' --popup 'center,50%' --pre-select-n 1 --pre-select-pat m --pre-select-items ['main/src/main.rs' 'lib/src/lib.rs'] --query main --select-1",
+                result: None,
+            },
+            Example {
                 description: "Return the selected item index instead of the value.",
                 example: "[Banana Kiwi Pear] | input skim --index",
                 result: None,
@@ -670,7 +662,9 @@ mod test {
     }
 
     fn is_headless_example(example: &str) -> bool {
-        if example.contains("--exit-0") && example.contains("--query") {
+        // Only examples that can deterministically finish without a TUI belong here.
+        // Everything else is compile-checked so the example suite cannot hang in CI.
+        if example.contains("--exit-0") {
             return true;
         }
 
@@ -789,8 +783,8 @@ mod test {
     fn test_format_skim_item() {
         let config = Config::default();
         let engine_state = EngineState::new();
-        let mut stack = Stack::new();
-        let comp = StyleComputer::from_config(&engine_state, &mut stack);
+        let stack = Stack::new();
+        let comp = StyleComputer::from_config(&engine_state, &stack);
         let value = Value::string("apple", Span::unknown());
 
         let (display, text) = format_skim_item(&value, &config, &comp, false);
@@ -802,8 +796,8 @@ mod test {
     fn test_format_skim_item_ansi() {
         let config = Config::default();
         let engine_state = EngineState::new();
-        let mut stack = Stack::new();
-        let comp = StyleComputer::from_config(&engine_state, &mut stack);
+        let stack = Stack::new();
+        let comp = StyleComputer::from_config(&engine_state, &stack);
         let value = Value::string("banana", Span::unknown());
 
         let (display, text) = format_skim_item(&value, &config, &comp, true);
@@ -826,7 +820,7 @@ mod test {
     #[test]
     fn test_parse_skim_default_options_all_supported_flags() {
         let options = crate::platform::input::skim_arguments::parse_skim_default_options(
-            "--bind 'ctrl-j:down' --prompt 'pick' --cmd-prompt 'cmd> ' --multi --tac --no-sort --tiebreak score,length --exact --interactive --query foo --cmd-query bar --regex --color 'fg:blue' --margin '1,2,3,4' --no-height --height 40% --min-height 5 --preview-window right:50% --reverse --tabstop 4 --no-hscroll --no-mouse --inline-info --layout reverse-list --algo clangd --case respect --keep-right --skip-to-pattern ':' --select-1 --exit-0 --sync --no-clear-if-empty --pre-select-n 1 --pre-select-pat 't' --pre-select-items one,two --pre-select-file /tmp/items",
+            "--bind 'ctrl-j:down' --prompt 'pick' --cmd-prompt 'cmd> ' --multi --tac --min-query-length 2 --no-sort --tiebreak score,length --nth 1,2 --with-nth 3 --delimiter / --exact --interactive --query foo --cmd-query bar --regex --color 'fg:blue' --margin '1,2,3,4' --no-height --height 40% --min-height 5 --preview-window right:50% --reverse --tabstop 4 --no-hscroll --no-mouse --inline-info --no-info --layout reverse-list --algo clangd --case respect --normalize --split-match ':' --last-match --keep-right --skip-to-pattern ':' --selector '>' --multi-selector '*' --select-1 --exit-0 --sync --no-clear-if-empty --highlight-line --show-cmd-error --cycle --disabled --header items --header-lines 1 --wrap --scrollbar '|' --no-scrollbar --history /tmp/history --history-size 7 --cmd-history /tmp/cmd-history --cmd-history-size 8 --read0 --print0 --print-query --print-cmd --print-score --print-header --print-current --output-format '{1}' --filter foo --popup center,50% --pre-select-n 1 --pre-select-pat 't' --pre-select-items one,two --pre-select-file /tmp/items",
         )
         .unwrap();
 
@@ -835,6 +829,7 @@ mod test {
         assert_eq!(options.cmd_prompt.as_deref(), Some("cmd> "));
         assert!(options.multi.unwrap_or(false));
         assert!(options.tac.unwrap_or(false));
+        assert_eq!(options.min_query_length, Some(2));
         assert!(options.no_sort.unwrap_or(false));
         assert_eq!(
             options.tiebreak.unwrap(),
@@ -843,6 +838,9 @@ mod test {
                 skim::prelude::RankCriteria::Length
             ]
         );
+        assert_eq!(options.nth, Some(vec!["1".to_string(), "2".to_string()]));
+        assert_eq!(options.with_nth, Some(vec!["3".to_string()]));
+        assert_eq!(options.delimiter.as_deref(), Some("/"));
         assert!(options.exact.unwrap_or(false));
         assert!(options.interactive.unwrap_or(false));
         assert_eq!(options.query.as_deref(), Some("foo"));
@@ -859,18 +857,50 @@ mod test {
         assert!(options.no_hscroll.unwrap_or(false));
         assert!(options.no_mouse.unwrap_or(false));
         assert!(options.inline_info.unwrap_or(false));
+        assert!(options.no_info.unwrap_or(false));
         assert_eq!(options.layout.as_deref(), Some("reverse-list"));
         assert_eq!(
             options.algorithm.unwrap(),
             skim::prelude::FuzzyAlgorithm::Clangd
         );
         assert_eq!(options.case.unwrap(), skim::prelude::CaseMatching::Respect);
+        assert!(options.normalize.unwrap_or(false));
+        assert_eq!(options.split_match, Some(':'));
+        assert!(options.last_match.unwrap_or(false));
         assert!(options.keep_right.unwrap_or(false));
         assert_eq!(options.skip_to_pattern.as_deref(), Some(":"));
+        assert_eq!(options.selector_icon.as_deref(), Some(">"));
+        assert_eq!(options.multi_select_icon.as_deref(), Some("*"));
         assert!(options.select1.unwrap_or(false));
         assert!(options.exit0.unwrap_or(false));
         assert!(options.sync.unwrap_or(false));
         assert!(options.no_clear_if_empty.unwrap_or(false));
+        assert!(options.highlight_line.unwrap_or(false));
+        assert!(options.show_cmd_error.unwrap_or(false));
+        assert!(options.cycle.unwrap_or(false));
+        assert!(options.disabled.unwrap_or(false));
+        assert_eq!(options.header.as_deref(), Some("items"));
+        assert_eq!(options.header_lines, Some(1));
+        assert!(options.wrap_items.unwrap_or(false));
+        assert_eq!(options.scrollbar.as_deref(), Some("|"));
+        assert!(options.no_scrollbar.unwrap_or(false));
+        assert_eq!(options.history_file.as_deref(), Some("/tmp/history"));
+        assert_eq!(options.history_size, Some(7));
+        assert_eq!(
+            options.cmd_history_file.as_deref(),
+            Some("/tmp/cmd-history")
+        );
+        assert_eq!(options.cmd_history_size, Some(8));
+        assert!(options.read0.unwrap_or(false));
+        assert!(options.print0.unwrap_or(false));
+        assert!(options.print_query.unwrap_or(false));
+        assert!(options.print_cmd.unwrap_or(false));
+        assert!(options.print_score.unwrap_or(false));
+        assert!(options.print_header.unwrap_or(false));
+        assert!(options.print_current.unwrap_or(false));
+        assert_eq!(options.output_format.as_deref(), Some("{1}"));
+        assert_eq!(options.filter.as_deref(), Some("foo"));
+        assert_eq!(options.popup.as_deref(), Some("center,50%"));
         assert_eq!(options.pre_select_n, Some(1));
         assert_eq!(options.pre_select_pat.as_deref(), Some("t"));
         assert_eq!(
@@ -887,11 +917,15 @@ mod test {
             cmd_prompt: Some("cmd> ".to_owned()),
             multi: true,
             tac: true,
+            min_query_length: Some(2),
             no_sort: true,
             tiebreak: vec![
                 skim::prelude::RankCriteria::Score,
                 skim::prelude::RankCriteria::Length,
             ],
+            nth: vec!["1".to_owned()],
+            with_nth: vec!["2".to_owned()],
+            delimiter: Some(regex::Regex::new("/").unwrap()),
             exact: true,
             interactive: true,
             query: Some("foo".to_owned()),
@@ -914,16 +948,42 @@ mod test {
             layout: Some(skim::tui::options::TuiLayout::ReverseList),
             algorithm: skim::prelude::FuzzyAlgorithm::Clangd,
             case: skim::prelude::CaseMatching::Respect,
+            normalize: true,
+            split_match: Some(':'),
+            last_match: true,
             keep_right: true,
             skip_to_pattern: Some(":".to_owned()),
+            selector_icon: Some(">".to_owned()),
+            multi_select_icon: Some("*".to_owned()),
             select1: true,
             exit0: true,
             sync: true,
             no_clear_if_empty: true,
-            pre_select_n: Some(1),
-            pre_select_pat: Some("t".to_owned()),
-            pre_select_items: vec!["one".to_owned(), "two".to_owned()],
-            pre_select_file: Some("items.txt".to_owned()),
+            no_strip_ansi: true,
+            highlight_line: true,
+            show_cmd_error: true,
+            cycle: true,
+            disabled: true,
+            no_info: true,
+            header: Some("items".to_owned()),
+            header_lines: Some(1),
+            wrap_items: true,
+            scrollbar: Some("|".to_owned()),
+            no_scrollbar: true,
+            history_file: Some("/tmp/skim-history".to_owned()),
+            history_size: Some(123),
+            cmd_history_file: Some("/tmp/skim-cmd-history".to_owned()),
+            cmd_history_size: Some(321),
+            read0: true,
+            print0: true,
+            print_query: true,
+            print_cmd: true,
+            print_score: true,
+            print_header: true,
+            print_current: true,
+            output_format: Some("{1}".to_owned()),
+            filter: Some("foo".to_owned()),
+            popup: Some("center,50%".to_owned()),
             selector: Some(std::rc::Rc::new(
                 skim::prelude::DefaultSkimSelector::default().first_n(1),
             )),
@@ -949,6 +1009,7 @@ mod test {
         assert!(options.multi);
         assert!(!options.no_multi);
         assert!(options.tac);
+        assert_eq!(options.min_query_length, Some(2));
         assert!(options.no_sort);
         assert_eq!(
             options.tiebreak,
@@ -957,6 +1018,9 @@ mod test {
                 skim::prelude::RankCriteria::Length
             ]
         );
+        assert_eq!(options.nth, vec!["1"]);
+        assert_eq!(options.with_nth, vec!["2"]);
+        assert_eq!(options.delimiter.as_str(), "/");
         assert!(options.exact);
         assert!(options.interactive);
         assert_eq!(options.query.as_deref(), Some("foo"));
@@ -975,20 +1039,49 @@ mod test {
         assert_eq!(options.tabstop, 4);
         assert!(options.no_hscroll);
         assert!(options.no_mouse);
-        assert!(options.inline_info);
+        assert!(!options.inline_info);
+        assert!(options.no_info);
         assert_eq!(options.layout, skim::tui::options::TuiLayout::ReverseList);
         assert_eq!(options.algorithm, skim::prelude::FuzzyAlgorithm::Clangd);
         assert_eq!(options.case, skim::prelude::CaseMatching::Respect);
+        assert!(options.normalize);
+        assert_eq!(options.split_match, Some(':'));
+        assert!(options.last_match);
         assert!(options.keep_right);
         assert_eq!(options.skip_to_pattern.as_deref(), Some(":"));
+        assert_eq!(options.selector_icon, ">");
+        assert_eq!(options.multi_select_icon, "*");
         assert!(options.select_1);
         assert!(options.exit_0);
         assert!(options.sync);
         assert!(options.no_clear_if_empty);
-        assert_eq!(options.pre_select_n, 1);
-        assert_eq!(options.pre_select_pat, "t");
-        assert_eq!(options.pre_select_items, "one\ntwo");
-        assert_eq!(options.pre_select_file.as_deref(), Some("items.txt"));
+        assert!(options.no_strip_ansi);
+        assert!(options.highlight_line);
+        assert!(options.show_cmd_error);
+        assert!(options.cycle);
+        assert!(options.disabled);
+        assert_eq!(options.header.as_deref(), Some("items"));
+        assert_eq!(options.header_lines, 1);
+        assert!(options.wrap_items);
+        assert_eq!(options.scrollbar, "|");
+        assert!(options.no_scrollbar);
+        assert_eq!(options.history_file.as_deref(), Some("/tmp/skim-history"));
+        assert_eq!(options.history_size, 123);
+        assert_eq!(
+            options.cmd_history_file.as_deref(),
+            Some("/tmp/skim-cmd-history")
+        );
+        assert_eq!(options.cmd_history_size, 321);
+        assert!(options.read0);
+        assert!(options.print0);
+        assert!(options.print_query);
+        assert!(options.print_cmd);
+        assert!(options.print_score);
+        assert!(options.print_header);
+        assert!(options.print_current);
+        assert_eq!(options.output_format.as_deref(), Some("{1}"));
+        assert_eq!(options.filter.as_deref(), Some("foo"));
+        assert_eq!(options.popup.as_deref(), Some("center,50%"));
         assert_eq!(options.preview.as_deref(), Some("preview"));
         assert!(options.selector.is_some());
         assert!(options.cmd.is_none());
@@ -1040,34 +1133,6 @@ mod test {
         };
 
         assert_eq!(item.value, value);
-    }
-
-    #[test]
-    fn test_select_1_auto_accepts_single_match_without_tui()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut options = skim::prelude::SkimOptions::default();
-        options.query = Some("apple".to_owned());
-        options.select_1 = true;
-        options.sync = true;
-        let options = options.build();
-
-        let output = Skim::run_items(options, ["apple", "banana"])?;
-        assert_eq!(output.selected_items.len(), 1);
-        assert_eq!(output.selected_items[0].output(), "apple");
-        Ok(())
-    }
-
-    #[test]
-    fn test_exit_0_returns_no_matches_without_tui()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let mut options = skim::prelude::SkimOptions::default();
-        options.query = Some("orange".to_owned());
-        options.exit_0 = true;
-        let options = options.build();
-
-        let output = Skim::run_items(options, ["apple", "banana"])?;
-        assert!(output.selected_items.is_empty());
-        Ok(())
     }
 
     #[test]

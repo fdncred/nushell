@@ -109,6 +109,7 @@ dns-lookup = "3.0.1"
 dtparse = "2.0"
 encoding_rs = "0.8"
 fancy-regex = "0.17"
+regex = "1.12.3"
 filesize = "0.2"
 filetime = "0.2.27"
 fuzzy-matcher = { version = "^0.3.7" }

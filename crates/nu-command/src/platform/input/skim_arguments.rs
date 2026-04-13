@@ -1,10 +1,14 @@
 use nu_engine::command_prelude::*;
 use nu_protocol::{Value, engine::Closure};
+use regex::Regex;
 use skim::binds::KeyMap;
 use skim::prelude::{
     CaseMatching, DefaultSkimSelector, FuzzyAlgorithm, RankCriteria, Selector, SkimOptions,
 };
-use skim::tui::options::{PreviewLayout, TuiLayout};
+use skim::tui::{
+    options::{PreviewLayout, TuiLayout},
+    statusline::InfoDisplay,
+};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -42,8 +46,12 @@ pub(crate) struct SkimDefaultOptions {
     pub cmd_prompt: Option<String>,
     pub multi: Option<bool>,
     pub tac: Option<bool>,
+    pub min_query_length: Option<usize>,
     pub no_sort: Option<bool>,
     pub tiebreak: Option<Vec<RankCriteria>>,
+    pub nth: Option<Vec<String>>,
+    pub with_nth: Option<Vec<String>>,
+    pub delimiter: Option<String>,
     pub exact: Option<bool>,
     pub interactive: Option<bool>,
     pub regex: Option<bool>,
@@ -66,12 +74,42 @@ pub(crate) struct SkimDefaultOptions {
     pub algorithm: Option<FuzzyAlgorithm>,
     pub case: Option<CaseMatching>,
     pub ansi: Option<bool>,
+    pub normalize: Option<bool>,
+    pub split_match: Option<char>,
+    pub last_match: Option<bool>,
     pub keep_right: Option<bool>,
     pub skip_to_pattern: Option<String>,
+    pub selector_icon: Option<String>,
+    pub multi_select_icon: Option<String>,
     pub select1: Option<bool>,
     pub exit0: Option<bool>,
     pub sync: Option<bool>,
     pub no_clear_if_empty: Option<bool>,
+    pub no_strip_ansi: Option<bool>,
+    pub highlight_line: Option<bool>,
+    pub show_cmd_error: Option<bool>,
+    pub cycle: Option<bool>,
+    pub disabled: Option<bool>,
+    pub no_info: Option<bool>,
+    pub header: Option<String>,
+    pub header_lines: Option<usize>,
+    pub wrap_items: Option<bool>,
+    pub scrollbar: Option<String>,
+    pub no_scrollbar: Option<bool>,
+    pub history_file: Option<String>,
+    pub history_size: Option<usize>,
+    pub cmd_history_file: Option<String>,
+    pub cmd_history_size: Option<usize>,
+    pub read0: Option<bool>,
+    pub print0: Option<bool>,
+    pub print_query: Option<bool>,
+    pub print_cmd: Option<bool>,
+    pub print_score: Option<bool>,
+    pub print_header: Option<bool>,
+    pub print_current: Option<bool>,
+    pub output_format: Option<String>,
+    pub filter: Option<String>,
+    pub popup: Option<String>,
     pub pre_select_n: Option<usize>,
     pub pre_select_pat: Option<String>,
     pub pre_select_items: Option<Vec<String>>,
@@ -98,8 +136,12 @@ pub(crate) struct SkimArguments {
     pub cmd_prompt: Option<String>,
     pub multi: bool,
     pub tac: bool,
+    pub min_query_length: Option<usize>,
     pub no_sort: bool,
     pub tiebreak: Vec<RankCriteria>,
+    pub nth: Vec<String>,
+    pub with_nth: Vec<String>,
+    pub delimiter: Option<Regex>,
     pub exact: bool,
     pub interactive: bool,
     pub query: Option<String>,
@@ -122,12 +164,42 @@ pub(crate) struct SkimArguments {
     pub layout: Option<TuiLayout>,
     pub algorithm: FuzzyAlgorithm,
     pub case: CaseMatching,
+    pub normalize: bool,
+    pub split_match: Option<char>,
+    pub last_match: bool,
     pub keep_right: bool,
     pub skip_to_pattern: Option<String>,
+    pub selector_icon: Option<String>,
+    pub multi_select_icon: Option<String>,
     pub select1: bool,
     pub exit0: bool,
     pub sync: bool,
     pub no_clear_if_empty: bool,
+    pub no_strip_ansi: bool,
+    pub highlight_line: bool,
+    pub show_cmd_error: bool,
+    pub cycle: bool,
+    pub disabled: bool,
+    pub no_info: bool,
+    pub header: Option<String>,
+    pub header_lines: Option<usize>,
+    pub wrap_items: bool,
+    pub scrollbar: Option<String>,
+    pub no_scrollbar: bool,
+    pub history_file: Option<String>,
+    pub history_size: Option<usize>,
+    pub cmd_history_file: Option<String>,
+    pub cmd_history_size: Option<usize>,
+    pub read0: bool,
+    pub print0: bool,
+    pub print_query: bool,
+    pub print_cmd: bool,
+    pub print_score: bool,
+    pub print_header: bool,
+    pub print_current: bool,
+    pub output_format: Option<String>,
+    pub filter: Option<String>,
+    pub popup: Option<String>,
     pub selector: Option<Rc<dyn Selector>>,
     pub cmd: Option<Spanned<Closure>>,
     pub format: Option<Spanned<Closure>>,
@@ -177,8 +249,30 @@ impl SkimArguments {
         let mut multi =
             call.has_flag(engine_state, stack, "multi")? || defaults.multi.unwrap_or(false);
         let tac = call.has_flag(engine_state, stack, "tac")? || defaults.tac.unwrap_or(false);
+        let min_query_length = call
+            .get_flag(engine_state, stack, "min-query-length")?
+            .or(defaults.min_query_length);
         let no_sort =
             call.has_flag(engine_state, stack, "no-sort")? || defaults.no_sort.unwrap_or(false);
+        let nth = call
+            .get_flag::<Vec<String>>(engine_state, stack, "nth")?
+            .unwrap_or_else(|| defaults.nth.clone().unwrap_or_default());
+        let with_nth = call
+            .get_flag::<Vec<String>>(engine_state, stack, "with-nth")?
+            .unwrap_or_else(|| defaults.with_nth.clone().unwrap_or_default());
+        let delimiter = call
+            .get_flag::<Spanned<String>>(engine_state, stack, "delimiter")?
+            .map(|value| parse_delimiter(&value))
+            .transpose()?
+            .or_else(|| {
+                defaults
+                    .delimiter
+                    .as_deref()
+                    .map(Regex::new)
+                    .transpose()
+                    .ok()
+                    .flatten()
+            });
         let exact = call.has_flag(engine_state, stack, "exact")? || defaults.exact.unwrap_or(false);
         let interactive = call.has_flag(engine_state, stack, "interactive")?
             || defaults.interactive.unwrap_or(false);
@@ -197,6 +291,17 @@ impl SkimArguments {
             call.has_flag(engine_state, stack, "no-mouse")? || defaults.no_mouse.unwrap_or(false);
         let inline_info = call.has_flag(engine_state, stack, "inline-info")?
             || defaults.inline_info.unwrap_or(false);
+        let no_info =
+            call.has_flag(engine_state, stack, "no-info")? || defaults.no_info.unwrap_or(false);
+        let normalize =
+            call.has_flag(engine_state, stack, "normalize")? || defaults.normalize.unwrap_or(false);
+        let split_match = call
+            .get_flag::<Spanned<String>>(engine_state, stack, "split-match")?
+            .map(|value| parse_single_char_flag("split-match", value))
+            .transpose()?
+            .or(defaults.split_match);
+        let last_match = call.has_flag(engine_state, stack, "last-match")?
+            || defaults.last_match.unwrap_or(false);
         let keep_right = call.has_flag(engine_state, stack, "keep-right")?
             || defaults.keep_right.unwrap_or(false);
         let select1 =
@@ -206,6 +311,32 @@ impl SkimArguments {
         let sync = call.has_flag(engine_state, stack, "sync")? || defaults.sync.unwrap_or(false);
         let no_clear_if_empty = call.has_flag(engine_state, stack, "no-clear-if-empty")?
             || defaults.no_clear_if_empty.unwrap_or(false);
+        let no_strip_ansi = call.has_flag(engine_state, stack, "no-strip-ansi")?
+            || defaults.no_strip_ansi.unwrap_or(false);
+        let highlight_line = call.has_flag(engine_state, stack, "highlight-line")?
+            || defaults.highlight_line.unwrap_or(false);
+        let show_cmd_error = call.has_flag(engine_state, stack, "show-cmd-error")?
+            || defaults.show_cmd_error.unwrap_or(false);
+        let cycle = call.has_flag(engine_state, stack, "cycle")? || defaults.cycle.unwrap_or(false);
+        let disabled =
+            call.has_flag(engine_state, stack, "disabled")? || defaults.disabled.unwrap_or(false);
+        let wrap_items =
+            call.has_flag(engine_state, stack, "wrap")? || defaults.wrap_items.unwrap_or(false);
+        let no_scrollbar = call.has_flag(engine_state, stack, "no-scrollbar")?
+            || defaults.no_scrollbar.unwrap_or(false);
+        let read0 = call.has_flag(engine_state, stack, "read0")? || defaults.read0.unwrap_or(false);
+        let print0 =
+            call.has_flag(engine_state, stack, "print0")? || defaults.print0.unwrap_or(false);
+        let print_query = call.has_flag(engine_state, stack, "print-query")?
+            || defaults.print_query.unwrap_or(false);
+        let print_cmd =
+            call.has_flag(engine_state, stack, "print-cmd")? || defaults.print_cmd.unwrap_or(false);
+        let print_score = call.has_flag(engine_state, stack, "print-score")?
+            || defaults.print_score.unwrap_or(false);
+        let print_header = call.has_flag(engine_state, stack, "print-header")?
+            || defaults.print_header.unwrap_or(false);
+        let print_current = call.has_flag(engine_state, stack, "print-current")?
+            || defaults.print_current.unwrap_or(false);
 
         let height: Option<String> = call
             .get_flag(engine_state, stack, "height")?
@@ -226,6 +357,42 @@ impl SkimArguments {
         let margin: Option<String> = call
             .get_flag(engine_state, stack, "margin")?
             .or_else(|| defaults.margin.clone());
+        let selector_icon: Option<String> = call
+            .get_flag(engine_state, stack, "selector")?
+            .or_else(|| defaults.selector_icon.clone());
+        let multi_select_icon: Option<String> = call
+            .get_flag(engine_state, stack, "multi-selector")?
+            .or_else(|| defaults.multi_select_icon.clone());
+        let header: Option<String> = call
+            .get_flag(engine_state, stack, "header")?
+            .or_else(|| defaults.header.clone());
+        let header_lines: Option<usize> = call
+            .get_flag(engine_state, stack, "header-lines")?
+            .or(defaults.header_lines);
+        let filter: Option<String> = call
+            .get_flag(engine_state, stack, "filter")?
+            .or_else(|| defaults.filter.clone());
+        let scrollbar: Option<String> = call
+            .get_flag(engine_state, stack, "scrollbar")?
+            .or_else(|| defaults.scrollbar.clone());
+        let history_file: Option<String> = call
+            .get_flag(engine_state, stack, "history")?
+            .or_else(|| defaults.history_file.clone());
+        let history_size = call
+            .get_flag(engine_state, stack, "history-size")?
+            .or(defaults.history_size);
+        let cmd_history_file: Option<String> = call
+            .get_flag(engine_state, stack, "cmd-history")?
+            .or_else(|| defaults.cmd_history_file.clone());
+        let cmd_history_size = call
+            .get_flag(engine_state, stack, "cmd-history-size")?
+            .or(defaults.cmd_history_size);
+        let output_format: Option<String> = call
+            .get_flag(engine_state, stack, "output-format")?
+            .or_else(|| defaults.output_format.clone());
+        let popup: Option<String> = call
+            .get_flag(engine_state, stack, "popup")?
+            .or_else(|| defaults.popup.clone());
 
         let tabstop: Option<usize> = call
             .get_flag(engine_state, stack, "tabstop")?
@@ -282,16 +449,12 @@ impl SkimArguments {
                 None => defaults.algorithm.unwrap_or_default(),
             };
 
-        let case = if call.has_flag(engine_state, stack, "case-sensitive")?
-            || call.has_flag(engine_state, stack, "ignore-case")?
-            || call.has_flag(engine_state, stack, "smart-case")?
-        {
-            case_mode_from_flags(
-                call.has_flag(engine_state, stack, "case-sensitive")?,
-                call.has_flag(engine_state, stack, "ignore-case")?,
-                call.has_flag(engine_state, stack, "smart-case")?,
-                call.head,
-            )?
+        let case_sensitive = call.has_flag(engine_state, stack, "case-sensitive")?;
+        let ignore_case = call.has_flag(engine_state, stack, "ignore-case")?;
+        let smart_case = call.has_flag(engine_state, stack, "smart-case")?;
+
+        let case = if case_sensitive || ignore_case || smart_case {
+            case_mode_from_flags(case_sensitive, ignore_case, smart_case, call.head)?
         } else if let Some(flag) = call.get_flag::<Spanned<String>>(engine_state, stack, "case")? {
             match flag.item.as_str() {
                 "smart" => CaseMatching::Smart,
@@ -353,46 +516,35 @@ impl SkimArguments {
         let mut selector: Option<Rc<dyn Selector>> = None;
         let mut dumb_selector: Option<DefaultSkimSelector> = None;
 
-        if let Some(n) = defaults.pre_select_n {
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().first_n(n));
-        }
-        if let Some(pat) = defaults.pre_select_pat.clone() {
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().regex(&pat));
-        }
-        if !defaults
-            .pre_select_items
-            .clone()
-            .unwrap_or_default()
-            .is_empty()
-        {
-            dumb_selector = Some(
-                dumb_selector
-                    .take()
-                    .unwrap_or_default()
-                    .preset(defaults.pre_select_items.clone().unwrap_or_default()),
-            );
-        }
+        dumb_selector = apply_preselect_n(dumb_selector, defaults.pre_select_n);
+        dumb_selector = apply_preselect_pattern(dumb_selector, defaults.pre_select_pat.clone());
+        dumb_selector = apply_preselect_items(
+            dumb_selector,
+            defaults.pre_select_items.clone().unwrap_or_default(),
+        );
         if let Some(file_path) = defaults.pre_select_file.clone() {
             let items = read_preselect_file_items(engine_state, stack, &file_path, call.head)?;
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().preset(items));
+            dumb_selector = apply_preselect_items(dumb_selector, items);
         }
 
-        if let Some(n) = call.get_flag(engine_state, stack, "pre-select-n")? {
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().first_n(n));
-        }
-        if let Some(pat) = call.get_flag::<String>(engine_state, stack, "pre-select-pat")? {
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().regex(&pat));
-        }
-        if let Some(items) =
+        dumb_selector = apply_preselect_n(
+            dumb_selector,
+            call.get_flag(engine_state, stack, "pre-select-n")?,
+        );
+        dumb_selector = apply_preselect_pattern(
+            dumb_selector,
+            call.get_flag::<String>(engine_state, stack, "pre-select-pat")?,
+        );
+        dumb_selector = apply_preselect_items(
+            dumb_selector,
             call.get_flag::<Vec<String>>(engine_state, stack, "pre-select-items")?
-        {
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().preset(items));
-        }
+                .unwrap_or_default(),
+        );
         if let Some(file_path) =
             call.get_flag::<Spanned<String>>(engine_state, stack, "pre-select-file")?
         {
             let items = read_preselect_file_items(engine_state, stack, &file_path.item, call.head)?;
-            dumb_selector = Some(dumb_selector.take().unwrap_or_default().preset(items));
+            dumb_selector = apply_preselect_items(dumb_selector, items);
         }
 
         if let Some(predicate) =
@@ -434,8 +586,12 @@ impl SkimArguments {
             cmd_prompt,
             multi,
             tac,
+            min_query_length,
             no_sort,
             tiebreak,
+            nth,
+            with_nth,
+            delimiter,
             exact,
             interactive,
             regex,
@@ -457,13 +613,43 @@ impl SkimArguments {
             layout,
             algorithm,
             case,
+            normalize,
+            split_match,
+            last_match,
             ansi,
             keep_right,
             skip_to_pattern,
+            selector_icon,
+            multi_select_icon,
             select1,
             exit0,
             sync,
             no_clear_if_empty,
+            no_strip_ansi,
+            highlight_line,
+            show_cmd_error,
+            cycle,
+            disabled,
+            no_info,
+            header,
+            header_lines,
+            wrap_items,
+            scrollbar,
+            no_scrollbar,
+            history_file,
+            history_size,
+            cmd_history_file,
+            cmd_history_size,
+            read0,
+            print0,
+            print_query,
+            print_cmd,
+            print_score,
+            print_header,
+            print_current,
+            output_format,
+            filter,
+            popup,
             selector,
             cmd,
             format,
@@ -477,8 +663,12 @@ impl SkimArguments {
             .switch("multi", "Select multiple values", Some('m'))
             .named("prompt", SyntaxShape::String, "Input prompt", None)
             .switch("tac", "Reverse the order of the search result (normally used with --no-sort)", None)
+            .named("min-query-length", SyntaxShape::Number, "Minimum query length required before matches are shown.", None)
             .switch("no-sort", "Do not sort the search result (normally used together with --tac)", None)
             .named("tiebreak", SyntaxShape::List(Box::new(SyntaxShape::String)), "List of sort criteria to apply when the scores are tied.", None)
+            .named("nth", SyntaxShape::List(Box::new(SyntaxShape::String)), "Fields to match.", None)
+            .named("with-nth", SyntaxShape::List(Box::new(SyntaxShape::String)), "Fields to transform for display.", None)
+            .named("delimiter", SyntaxShape::String, "Regex delimiter between fields.", None)
             .switch("exact", "Enable exact-match", Some('e'))
             .switch("interactive", "Start skim in interactive(command) mode", None)
             .named("query", SyntaxShape::String, "Specify the initial query", Some('q'))
@@ -505,11 +695,41 @@ impl SkimArguments {
             .named("layout", SyntaxShape::String, "Choose the layout", None)
             .named("algo", SyntaxShape::String, "Fuzzy matching algorithm: [skim_v1|skim_v2|clangd] (default: skim_v2)", None)
             .named("case", SyntaxShape::String, "Case sensitivity: [smart|ignore|respect] (default: smart)", None)
+            .switch("normalize", "Normalize unicode characters before matching.", None)
+            .named("split-match", SyntaxShape::String, "Enable split matching with the given separator character.", None)
+            .switch("last-match", "Highlight the last match found instead of the first.", None)
             .switch("keep-right", "Keep the right end of the line visible when it's too long", None)
             .named("skip-to-pattern", SyntaxShape::String, "Line will start with the start of the matched pattern", None)
+            .named("selector", SyntaxShape::String, "Selected item marker.", None)
+            .named("multi-selector", SyntaxShape::String, "Multi-selection marker.", None)
             .switch("select-1", "Automatically select the only match", Some('1'))
             .switch("exit-0", "Exit immediately when there's no match", Some('0'))
             .switch("sync", "Wait for all the options to be available before choosing", None)
+            .switch("no-strip-ansi", "Preserve ANSI escape sequences in output when ANSI is enabled.", None)
+            .switch("highlight-line", "Highlight the entire current line, not just matched text.", None)
+            .switch("show-cmd-error", "Show command errors in interactive command mode.", None)
+            .switch("cycle", "Cycle results by wrapping around when scrolling.", None)
+            .switch("disabled", "Disable matching entirely.", None)
+            .switch("no-info", "Hide the finder info line.", None)
+            .named("header", SyntaxShape::String, "Sticky header text.", None)
+            .named("header-lines", SyntaxShape::Number, "Treat the first N input lines as sticky header.", None)
+            .switch("wrap", "Wrap items in the item list.", None)
+            .named("scrollbar", SyntaxShape::String, "Scrollbar thumb indicator.", None)
+            .switch("no-scrollbar", "Hide the scrollbar.", None)
+            .named("history", SyntaxShape::Filepath, "Search history file.", None)
+            .named("history-size", SyntaxShape::Number, "Maximum number of search history entries.", None)
+            .named("cmd-history", SyntaxShape::Filepath, "Command history file.", None)
+            .named("cmd-history-size", SyntaxShape::Number, "Maximum number of command history entries.", None)
+            .switch("read0", "Read NUL-delimited input.", None)
+            .switch("print0", "Print NUL-delimited output.", None)
+            .switch("print-query", "Print query as first output line.", None)
+            .switch("print-cmd", "Print command as first output line (after print-query).", None)
+            .switch("print-score", "Print score after each item.", None)
+            .switch("print-header", "Print header before items.", None)
+            .switch("print-current", "Print the current item before selected results.", None)
+            .named("output-format", SyntaxShape::String, "Custom output format string.", None)
+            .named("filter", SyntaxShape::String, "Filter-mode query.", None)
+            .named("popup", SyntaxShape::String, "Run skim inside a popup layout.", None)
             .named("pre-select-n", SyntaxShape::Number, "Pre-select the first n items in multi-selection mode", None)
             .named("pre-select-pat", SyntaxShape::String, "Pre-select the matched items in multi-selection mode", None)
             .named("pre-select-items", SyntaxShape::List(Box::new(SyntaxShape::String)), "Pre-select the items in the given list", None)
@@ -545,8 +765,15 @@ impl SkimArguments {
         options.prompt = self.prompt.clone().unwrap_or_default();
         options.cmd_prompt = self.cmd_prompt.clone().unwrap_or_default();
         options.tac = self.tac;
+        options.min_query_length = self.min_query_length;
         options.no_sort = self.no_sort;
         options.tiebreak = self.tiebreak.clone();
+        options.nth = self.nth.clone();
+        options.with_nth = self.with_nth.clone();
+        options.delimiter = self
+            .delimiter
+            .clone()
+            .unwrap_or_else(|| default_options.delimiter.clone());
         options.exact = self.exact;
         options.cmd = if self.cmd.is_some() {
             Some("{q}".to_owned())
@@ -584,14 +811,38 @@ impl SkimArguments {
         options.layout = if self.reverse {
             TuiLayout::Reverse
         } else {
-            self.layout.clone().unwrap_or_default()
+            self.layout.unwrap_or_default()
         };
         options.algorithm = self.algorithm;
         options.case = self.case;
+        options.normalize = self.normalize;
+        options.split_match = self.split_match;
+        options.last_match = self.last_match;
         options.keep_right = self.keep_right;
         options.skip_to_pattern = self.skip_to_pattern.clone();
+        options.selector_icon = self
+            .selector_icon
+            .clone()
+            .unwrap_or_else(|| default_options.selector_icon.clone());
+        options.multi_select_icon = self
+            .multi_select_icon
+            .clone()
+            .unwrap_or_else(|| default_options.multi_select_icon.clone());
         options.ansi = self.ansi;
-        options.no_strip_ansi = self.ansi;
+        options.no_strip_ansi = self.no_strip_ansi || self.ansi;
+        options.highlight_line = self.highlight_line;
+        options.show_cmd_error = self.show_cmd_error;
+        options.cycle = self.cycle;
+        options.disabled = self.disabled;
+        options.no_info = self.no_info;
+        options.inline_info = self.inline_info && !self.no_info;
+        options.info = if self.no_info {
+            InfoDisplay::Hidden
+        } else if self.inline_info {
+            InfoDisplay::Inline
+        } else {
+            default_options.info
+        };
         options.select_1 = self.select1;
         options.exit_0 = self.exit0;
         // `--sync` can block indefinitely in non-interactive mode; only enable user-requested
@@ -601,6 +852,30 @@ impl SkimArguments {
             self.select1 || self.exit0 || (self.sync && (self.interactive || self.cmd.is_some()));
         options.selector = self.selector.clone();
         options.no_clear_if_empty = self.no_clear_if_empty;
+        options.header = self.header.clone();
+        options.header_lines = self.header_lines.unwrap_or_default();
+        options.wrap_items = self.wrap_items;
+        options.scrollbar = self
+            .scrollbar
+            .clone()
+            .unwrap_or_else(|| default_options.scrollbar.clone());
+        options.no_scrollbar = self.no_scrollbar;
+        options.history_file = self.history_file.clone();
+        options.history_size = self.history_size.unwrap_or(default_options.history_size);
+        options.cmd_history_file = self.cmd_history_file.clone();
+        options.cmd_history_size = self
+            .cmd_history_size
+            .unwrap_or(default_options.cmd_history_size);
+        options.read0 = self.read0;
+        options.print0 = self.print0;
+        options.print_query = self.print_query;
+        options.print_cmd = self.print_cmd;
+        options.print_score = self.print_score;
+        options.print_header = self.print_header;
+        options.print_current = self.print_current;
+        options.output_format = self.output_format.clone();
+        options.filter = self.filter.clone();
+        options.popup = self.popup.clone();
         options.preview = match &self.preview {
             Some(Value::String { val, .. }) => Some(val.clone()),
             Some(Value::Closure { .. }) => Some(String::new()),
@@ -611,23 +886,7 @@ impl SkimArguments {
         // PredicateBasedSelector.  Setting both the native fields AND `selector` can
         // cause skim to create its own conflicting DefaultSkimSelector internally.
         options.shell = default_options.shell;
-        options.nth = default_options.nth;
-        options.delimiter = default_options.delimiter;
-        options.read0 = default_options.read0;
-        options.print0 = default_options.print0;
-        options.print_query = default_options.print_query;
-        options.print_cmd = default_options.print_cmd;
-        options.print_score = default_options.print_score;
-        options.filter = default_options.filter;
-        options.cycle = default_options.cycle;
         options.border = default_options.border;
-        options.normalize = default_options.normalize;
-        options.split_match = default_options.split_match;
-        options.disabled = default_options.disabled;
-        options.selector_icon = default_options.selector_icon;
-        options.multi_select_icon = default_options.multi_select_icon;
-        options.wrap_items = default_options.wrap_items;
-        options.print_header = default_options.print_header;
         options.shell_bindings = default_options.shell_bindings;
         options.man = default_options.man;
         options.listen = default_options.listen;
@@ -662,7 +921,25 @@ pub(crate) fn parse_skim_default_options(s: &str) -> Result<SkimDefaultOptions, 
                 }
                 "multi" => options.multi = Some(true),
                 "tac" => options.tac = Some(true),
+                "min-query-length" => {
+                    options.min_query_length = parse_usize_flag(value_opt, &mut tokens);
+                }
                 "no-sort" => options.no_sort = Some(true),
+                "nth" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.nth = Some(split_csv_like(&value));
+                    }
+                }
+                "with-nth" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.with_nth = Some(split_csv_like(&value));
+                    }
+                }
+                "delimiter" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.delimiter = Some(value);
+                    }
+                }
                 "exact" => options.exact = Some(true),
                 "interactive" => options.interactive = Some(true),
                 "regex" => options.regex = Some(true),
@@ -673,12 +950,29 @@ pub(crate) fn parse_skim_default_options(s: &str) -> Result<SkimDefaultOptions, 
                 "no-hscroll" => options.no_hscroll = Some(true),
                 "no-mouse" => options.no_mouse = Some(true),
                 "inline-info" => options.inline_info = Some(true),
+                "no-info" => options.no_info = Some(true),
                 "keep-right" => options.keep_right = Some(true),
+                "normalize" => options.normalize = Some(true),
+                "last-match" => options.last_match = Some(true),
                 "select-1" => options.select1 = Some(true),
                 "exit-0" => options.exit0 = Some(true),
                 "sync" => options.sync = Some(true),
                 "no-clear-if-empty" => options.no_clear_if_empty = Some(true),
+                "no-strip-ansi" => options.no_strip_ansi = Some(true),
                 "ansi" => options.ansi = Some(true),
+                "highlight-line" => options.highlight_line = Some(true),
+                "show-cmd-error" => options.show_cmd_error = Some(true),
+                "cycle" => options.cycle = Some(true),
+                "disabled" => options.disabled = Some(true),
+                "wrap" => options.wrap_items = Some(true),
+                "no-scrollbar" => options.no_scrollbar = Some(true),
+                "read0" => options.read0 = Some(true),
+                "print0" => options.print0 = Some(true),
+                "print-query" => options.print_query = Some(true),
+                "print-cmd" => options.print_cmd = Some(true),
+                "print-score" => options.print_score = Some(true),
+                "print-header" => options.print_header = Some(true),
+                "print-current" => options.print_current = Some(true),
                 "prompt" => {
                     if let Some(value) = take_opt_value(value_opt, &mut tokens) {
                         options.prompt = Some(value);
@@ -707,6 +1001,60 @@ pub(crate) fn parse_skim_default_options(s: &str) -> Result<SkimDefaultOptions, 
                 "margin" => {
                     if let Some(value) = take_opt_value(value_opt, &mut tokens) {
                         options.margin = Some(value);
+                    }
+                }
+                "selector" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.selector_icon = Some(value);
+                    }
+                }
+                "multi-selector" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.multi_select_icon = Some(value);
+                    }
+                }
+                "header" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.header = Some(value);
+                    }
+                }
+                "header-lines" => {
+                    options.header_lines = parse_usize_flag(value_opt, &mut tokens);
+                }
+                "filter" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.filter = Some(value);
+                    }
+                }
+                "scrollbar" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.scrollbar = Some(value);
+                    }
+                }
+                "history" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.history_file = Some(value);
+                    }
+                }
+                "history-size" => {
+                    options.history_size = parse_usize_flag(value_opt, &mut tokens);
+                }
+                "cmd-history" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.cmd_history_file = Some(value);
+                    }
+                }
+                "cmd-history-size" => {
+                    options.cmd_history_size = parse_usize_flag(value_opt, &mut tokens);
+                }
+                "output-format" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.output_format = Some(value);
+                    }
+                }
+                "popup" => {
+                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
+                        options.popup = Some(value);
                     }
                 }
                 "min-height" => {
@@ -754,12 +1102,13 @@ pub(crate) fn parse_skim_default_options(s: &str) -> Result<SkimDefaultOptions, 
                         options.skip_to_pattern = Some(value);
                     }
                 }
-                "tabstop" => {
+                "split-match" => {
                     if let Some(value) = take_opt_value(value_opt, &mut tokens) {
-                        if let Ok(n) = value.parse::<usize>() {
-                            options.tabstop = Some(n);
-                        }
+                        options.split_match = value.chars().next();
                     }
+                }
+                "tabstop" => {
+                    options.tabstop = parse_usize_flag(value_opt, &mut tokens);
                 }
                 "tiebreak" => {
                     if let Some(value) = take_opt_value(value_opt, &mut tokens) {
@@ -774,11 +1123,7 @@ pub(crate) fn parse_skim_default_options(s: &str) -> Result<SkimDefaultOptions, 
                     }
                 }
                 "pre-select-n" => {
-                    if let Some(value) = take_opt_value(value_opt, &mut tokens) {
-                        if let Ok(n) = value.parse::<usize>() {
-                            options.pre_select_n = Some(n);
-                        }
-                    }
+                    options.pre_select_n = parse_usize_flag(value_opt, &mut tokens);
                 }
                 "pre-select-pat" => {
                     if let Some(value) = take_opt_value(value_opt, &mut tokens) {
@@ -800,8 +1145,8 @@ pub(crate) fn parse_skim_default_options(s: &str) -> Result<SkimDefaultOptions, 
             continue;
         }
 
-        if token.starts_with('-') {
-            let mut chars = token[1..].chars().peekable();
+        if let Some(stripped) = token.strip_prefix('-') {
+            let mut chars = stripped.chars().peekable();
             while let Some(c) = chars.next() {
                 match c {
                     'm' => options.multi = Some(true),
@@ -853,6 +1198,67 @@ fn read_preselect_file_items(
         .lines()
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| ShellError::Io(IoError::new(err, span, resolved)))
+}
+
+fn parse_delimiter(value: &Spanned<String>) -> Result<Regex, ShellError> {
+    Regex::new(&value.item).map_err(|_| ShellError::InvalidValue {
+        actual: value.item.clone(),
+        valid: "a valid regex delimiter".to_owned(),
+        span: value.span,
+    })
+}
+
+fn parse_single_char_flag(flag_name: &str, value: Spanned<String>) -> Result<char, ShellError> {
+    let mut chars = value.item.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => Ok(ch),
+        _ => Err(ShellError::InvalidValue {
+            actual: value.item,
+            valid: format!("a single character for --{flag_name}"),
+            span: value.span,
+        }),
+    }
+}
+
+fn parse_usize_flag<I>(
+    value_opt: Option<String>,
+    tokens: &mut std::iter::Peekable<I>,
+) -> Option<usize>
+where
+    I: Iterator<Item = String>,
+{
+    take_opt_value(value_opt, tokens).and_then(|value| value.parse::<usize>().ok())
+}
+
+fn apply_preselect_n(
+    selector: Option<DefaultSkimSelector>,
+    count: Option<usize>,
+) -> Option<DefaultSkimSelector> {
+    match count {
+        Some(count) => Some(selector.unwrap_or_default().first_n(count)),
+        None => selector,
+    }
+}
+
+fn apply_preselect_pattern(
+    selector: Option<DefaultSkimSelector>,
+    pattern: Option<String>,
+) -> Option<DefaultSkimSelector> {
+    match pattern {
+        Some(pattern) => Some(selector.unwrap_or_default().regex(&pattern)),
+        None => selector,
+    }
+}
+
+fn apply_preselect_items(
+    selector: Option<DefaultSkimSelector>,
+    items: Vec<String>,
+) -> Option<DefaultSkimSelector> {
+    if items.is_empty() {
+        selector
+    } else {
+        Some(selector.unwrap_or_default().preset(items))
+    }
 }
 
 fn shell_split(s: &str) -> Vec<String> {
