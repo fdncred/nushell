@@ -1,3 +1,4 @@
+use crate::platform::input::skim_context::CommandContext;
 use nu_color_config::StyleComputer;
 use nu_engine::{ClosureEval, command_prelude::*, eval_call};
 use nu_protocol::{
@@ -10,6 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use skim::prelude::{Cow, DisplayContext, ItemPreview, PreviewContext, SkimItem};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub(crate) fn format_skim_item(
     value: &Value,
@@ -125,8 +127,49 @@ pub(crate) struct SkimValueItem {
     pub display: String,
     pub text: String,
     pub preview: Option<String>,
+    pub preview_context: Option<Arc<CommandContext>>,
     pub index: usize,
     pub ansi: bool,
+}
+
+fn render_preview_from_context(context: &CommandContext, value: &Value) -> String {
+    let preview_result = context.preview.map(context, value);
+    if let Ok(preview_string) = preview_result.clone().coerce_string() {
+        return preview_string;
+    }
+
+    context
+        .engine_state
+        .find_decl("table".as_bytes(), &[])
+        .and_then(|table_decl_id| {
+            let table_call = AstCall {
+                decl_id: table_decl_id,
+                head: value.span(),
+                arguments: Vec::new(),
+                parser_info: HashMap::new(),
+            };
+            let mut stack = (*context.stack).clone();
+            let output = if context.engine_state.is_debugging() {
+                eval_call::<WithDebug>(
+                    &context.engine_state,
+                    &mut stack,
+                    &table_call,
+                    PipelineData::Value(value.clone(), None),
+                )
+            } else {
+                eval_call::<WithoutDebug>(
+                    &context.engine_state,
+                    &mut stack,
+                    &table_call,
+                    PipelineData::Value(value.clone(), None),
+                )
+            };
+            match output {
+                Ok(table_output) => table_output.collect_string("\n", &context.nu_config).ok(),
+                Err(_) => None,
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Convert a string that may contain ANSI SGR escape sequences into a ratatui
@@ -303,7 +346,13 @@ impl SkimItem for SkimValueItem {
     fn preview(&self, _context: PreviewContext<'_>) -> ItemPreview {
         match &self.preview {
             Some(preview) => ItemPreview::AnsiText(preview.clone()),
-            None => ItemPreview::Global,
+            None => match &self.preview_context {
+                Some(context) => ItemPreview::AnsiText(render_preview_from_context(
+                    context.as_ref(),
+                    &self.value,
+                )),
+                None => ItemPreview::Global,
+            },
         }
     }
 

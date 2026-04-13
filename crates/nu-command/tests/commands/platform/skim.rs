@@ -44,3 +44,10 @@ fn input_skim_compiles_case_mode_switches() -> Result {
     test().parse_and_compile("[Foo] | input skim --smart-case --select-1 --query Foo")?;
     Ok(())
 }
+
+#[test]
+fn input_skim_preview_closure_is_lazy() -> Result {
+    test()
+        .run("[good bad] | input skim --select-1 --query good --preview {|r| if $r == 'good' { 'ok' } else { error make {msg: 'preview should be lazy'} }}")
+        .expect_value_eq("good")
+}

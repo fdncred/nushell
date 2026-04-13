@@ -102,6 +102,7 @@ Use --regex or Ctrl-R to switch into regex mode."
             Some(Value::Closure { val, .. }) => Some(ClosureEval::new(engine_state, stack, *val)),
             _ => None,
         };
+        let lazy_preview = preview_closure.is_some();
 
         let (skim_output, values) = match input {
             PipelineData::ListStream(..)
@@ -156,6 +157,54 @@ Use --regex or Ctrl-R to switch into regex mode."
                 return Ok(result.into_pipeline_data());
             }
             PipelineData::ListStream(..) => {
+                if !index_flag && skim_args.format.is_none() {
+                    let (tx, rx) = skim::prelude::unbounded();
+                    let context = command_context.clone();
+
+                    std::thread::spawn(move || {
+                        for value in input {
+                            let item = Arc::new(NuItem::new(context.clone(), value))
+                                as Arc<dyn skim::prelude::SkimItem>;
+                            if tx.send(vec![item]).is_err() {
+                                break;
+                            }
+                        }
+                    });
+
+                    let skim_output = Skim::run_with(options, Some(rx)).map_err(|err| {
+                        ShellError::ExternalCommand {
+                            label: "Failed to run skim".into(),
+                            help: err.to_string(),
+                            span: head,
+                        }
+                    })?;
+
+                    if skim_output.is_abort {
+                        return Ok(Value::nothing(head).into_pipeline_data());
+                    }
+
+                    let values = skim_output
+                        .selected_items
+                        .iter()
+                        .filter_map(|item| {
+                            item.as_any()
+                                .downcast_ref::<NuItem>()
+                                .map(|item| item.value.clone())
+                        })
+                        .collect::<Vec<_>>();
+
+                    let result = if multi {
+                        Value::list(values, head)
+                    } else {
+                        values
+                            .into_iter()
+                            .next()
+                            .unwrap_or_else(|| Value::nothing(head))
+                    };
+
+                    return Ok(result.into_pipeline_data());
+                }
+
                 let (tx, rx) = skim::prelude::unbounded();
                 let mut values = Vec::new();
                 let mut batch: Vec<Arc<dyn skim::prelude::SkimItem>> = Vec::with_capacity(1024);
@@ -168,15 +217,19 @@ Use --regex or Ctrl-R to switch into regex mode."
                         skim_args.ansi,
                         &mut format_closure,
                     )?;
-                    let preview = preview_skim_item_with_closure(
-                        &value,
-                        &config,
-                        &style_computer,
-                        skim_args.ansi,
-                        engine_state,
-                        &mut preview_stack,
-                        &mut preview_closure,
-                    )?;
+                    let preview = if lazy_preview {
+                        None
+                    } else {
+                        preview_skim_item_with_closure(
+                            &value,
+                            &config,
+                            &style_computer,
+                            skim_args.ansi,
+                            engine_state,
+                            &mut preview_stack,
+                            &mut preview_closure,
+                        )?
+                    };
 
                     values.push(value.clone());
                     batch.push(Arc::new(SkimValueItem {
@@ -184,6 +237,11 @@ Use --regex or Ctrl-R to switch into regex mode."
                         display,
                         text,
                         preview,
+                        preview_context: if lazy_preview {
+                            Some(command_context.clone())
+                        } else {
+                            None
+                        },
                         index: idx,
                         ansi: skim_args.ansi,
                     }));
@@ -243,20 +301,29 @@ Use --regex or Ctrl-R to switch into regex mode."
                             skim_args.ansi,
                             &mut format_closure,
                         )?;
-                        let preview = preview_skim_item_with_closure(
-                            value,
-                            &config,
-                            &style_computer,
-                            skim_args.ansi,
-                            engine_state,
-                            &mut preview_stack,
-                            &mut preview_closure,
-                        )?;
+                        let preview = if lazy_preview {
+                            None
+                        } else {
+                            preview_skim_item_with_closure(
+                                value,
+                                &config,
+                                &style_computer,
+                                skim_args.ansi,
+                                engine_state,
+                                &mut preview_stack,
+                                &mut preview_closure,
+                            )?
+                        };
                         Ok(SkimValueItem {
                             value: value.clone(),
                             display,
                             text,
                             preview,
+                            preview_context: if lazy_preview {
+                                Some(command_context.clone())
+                            } else {
+                                None
+                            },
                             index: idx,
                             ansi: skim_args.ansi,
                         })
@@ -305,20 +372,29 @@ Use --regex or Ctrl-R to switch into regex mode."
                             skim_args.ansi,
                             &mut format_closure,
                         )?;
-                        let preview = preview_skim_item_with_closure(
-                            value,
-                            &config,
-                            &style_computer,
-                            skim_args.ansi,
-                            engine_state,
-                            &mut preview_stack,
-                            &mut preview_closure,
-                        )?;
+                        let preview = if lazy_preview {
+                            None
+                        } else {
+                            preview_skim_item_with_closure(
+                                value,
+                                &config,
+                                &style_computer,
+                                skim_args.ansi,
+                                engine_state,
+                                &mut preview_stack,
+                                &mut preview_closure,
+                            )?
+                        };
                         Ok(SkimValueItem {
                             value: value.clone(),
                             display,
                             text,
                             preview,
+                            preview_context: if lazy_preview {
+                                Some(command_context.clone())
+                            } else {
+                                None
+                            },
                             index: idx,
                             ansi: skim_args.ansi,
                         })
@@ -378,20 +454,29 @@ Use --regex or Ctrl-R to switch into regex mode."
                             skim_args.ansi,
                             &mut format_closure,
                         )?;
-                        let preview = preview_skim_item_with_closure(
-                            value,
-                            &config,
-                            &style_computer,
-                            skim_args.ansi,
-                            engine_state,
-                            &mut preview_stack,
-                            &mut preview_closure,
-                        )?;
+                        let preview = if lazy_preview {
+                            None
+                        } else {
+                            preview_skim_item_with_closure(
+                                value,
+                                &config,
+                                &style_computer,
+                                skim_args.ansi,
+                                engine_state,
+                                &mut preview_stack,
+                                &mut preview_closure,
+                            )?
+                        };
                         Ok(SkimValueItem {
                             value: value.clone(),
                             display,
                             text,
                             preview,
+                            preview_context: if lazy_preview {
+                                Some(command_context.clone())
+                            } else {
+                                None
+                            },
                             index: idx,
                             ansi: skim_args.ansi,
                         })
@@ -1128,6 +1213,7 @@ mod test {
             display: "apple".to_owned(),
             text: "apple".to_owned(),
             preview: None,
+            preview_context: None,
             index: 0,
             ansi: false,
         };
