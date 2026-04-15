@@ -670,7 +670,11 @@ impl SkimArguments {
             .named("with-nth", SyntaxShape::List(Box::new(SyntaxShape::String)), "Fields to transform for display.", None)
             .named("delimiter", SyntaxShape::String, "Regex delimiter between fields.", None)
             .switch("exact", "Enable exact-match", Some('e'))
-            .switch("interactive", "Start skim in interactive(command) mode", None)
+            .switch(
+                "interactive",
+                "Start skim in interactive(command) mode",
+                Some('i'),
+            )
             .named("query", SyntaxShape::String, "Specify the initial query", Some('q'))
             .named("cmd-query", SyntaxShape::String, "Specify the initial query for interactive mode", None)
             .named("cmd-prompt", SyntaxShape::String, "Command mode prompt", None)

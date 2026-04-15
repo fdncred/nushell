@@ -27,7 +27,7 @@ impl Command for SkimCommand {
             .switch(
                 "index",
                 "Return the selected item index or indexes instead of values.",
-                Some('i'),
+                Some('I'),
             )
             .category(Category::Platform)
     }
@@ -84,10 +84,59 @@ Use --regex or Ctrl-R to switch into regex mode."
             command_context.preview =
                 MapperFlag::Closure(val.as_ref().clone().into_spanned(internal_span));
         }
+        command_context.ansi = skim_args.ansi;
         let command_context = Arc::new(command_context);
         let options = skim_args.to_skim_options(head, Some(command_context.clone()))?;
         let index_flag = call.has_flag(engine_state, stack, "index")?;
         let multi = skim_args.multi;
+
+        if skim_args.cmd.is_some() {
+            if index_flag {
+                return Err(ShellError::IncompatibleParameters {
+                    left_message: "--index".to_owned(),
+                    left_span: head,
+                    right_message: "--cmd".to_owned(),
+                    right_span: head,
+                });
+            }
+
+            let skim_output =
+                Skim::run_with(options, None).map_err(|err| ShellError::ExternalCommand {
+                    label: "Failed to run skim".into(),
+                    help: err.to_string(),
+                    span: head,
+                })?;
+
+            if skim_output.is_abort {
+                return Ok(Value::nothing(head).into_pipeline_data());
+            }
+
+            let values = skim_output
+                .selected_items
+                .iter()
+                .filter_map(|item| {
+                    item.as_any()
+                        .downcast_ref::<NuItem>()
+                        .map(|item| item.value.clone())
+                        .or_else(|| {
+                            item.as_any()
+                                .downcast_ref::<SkimValueItem>()
+                                .map(|item| item.value.clone())
+                        })
+                })
+                .collect::<Vec<_>>();
+
+            let result = if multi {
+                Value::list(values, head)
+            } else {
+                values
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| Value::nothing(head))
+            };
+
+            return Ok(result.into_pipeline_data());
+        }
 
         let config = stack.get_config(engine_state);
         let stack_for_style = stack.clone();

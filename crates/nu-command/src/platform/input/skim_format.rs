@@ -176,7 +176,7 @@ fn render_preview_from_context(context: &CommandContext, value: &Value) -> Strin
 /// `Line` with corresponding styles applied to each text segment.  This allows
 /// `--ansi` items to render with actual colours inside the skim TUI instead of
 /// showing the raw escape codes as literal characters.
-fn ansi_string_to_ratatui_line(s: &str) -> Line<'static> {
+pub(crate) fn ansi_string_to_ratatui_line(s: &str) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current_text = String::new();
     let mut current_style = Style::default();

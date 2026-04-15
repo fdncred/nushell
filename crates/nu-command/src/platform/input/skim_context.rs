@@ -1,4 +1,4 @@
-use crate::platform::input::skim_format::SkimValueItem;
+use crate::platform::input::skim_format::{SkimValueItem, ansi_string_to_ratatui_line};
 use nu_engine::{ClosureEval, command_prelude::*, eval_call};
 use nu_protocol::{
     Config, Value,
@@ -22,6 +22,7 @@ pub(crate) struct CommandContext {
     pub nu_config: Arc<Config>,
     pub format: MapperFlag,
     pub preview: MapperFlag,
+    pub ansi: bool,
 }
 
 impl CommandContext {
@@ -32,6 +33,7 @@ impl CommandContext {
             nu_config: stack.get_config(engine_state),
             format: MapperFlag::None,
             preview: MapperFlag::None,
+            ansi: false,
         })
     }
 }
@@ -101,12 +103,15 @@ pub(crate) struct NuItem {
 
 impl NuItem {
     pub(crate) fn new(context: Arc<CommandContext>, value: Value) -> Self {
-        let display = Line::from(
-            context
-                .format
-                .map(&context, &value)
-                .to_expanded_string(", ", &context.nu_config),
-        );
+        let formatted = context
+            .format
+            .map(&context, &value)
+            .to_expanded_string(", ", &context.nu_config);
+        let display = if context.ansi {
+            ansi_string_to_ratatui_line(&formatted)
+        } else {
+            Line::from(formatted)
+        };
 
         Self {
             context,
@@ -210,6 +215,16 @@ pub(crate) struct NuCommandCollector {
     pub closure: Spanned<Closure>,
 }
 
+fn decode_skim_query_arg(arg: &str) -> Option<String> {
+    if arg.len() < 2 || !arg.starts_with('\'') || !arg.ends_with('\'') {
+        return None;
+    }
+
+    // skim expands {q} with shell-safe single-quoted text when quote_args=true,
+    // using '\'' for embedded single quotes on Unix.
+    Some(arg[1..arg.len() - 1].replace("'\\''", "'"))
+}
+
 impl CommandCollector for NuCommandCollector {
     fn invoke(
         &mut self,
@@ -220,44 +235,117 @@ impl CommandCollector for NuCommandCollector {
         let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
         let context = self.context.clone();
         let closure = self.closure.clone();
-        let cmd = cmd.to_owned();
+        let cmd_query = decode_skim_query_arg(cmd).unwrap_or_else(|| cmd.to_owned());
+
+        // Mark command worker as active before spawning to avoid a race where skim
+        // observes no active components and exits filter/select paths early.
+        components_to_stop.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         std::thread::spawn(move || {
-            components_to_stop.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let stack = (*context.stack).clone();
-            let mut eval = ClosureEval::new(&context.engine_state, &stack, closure.item.clone());
-            let output = eval.run_with_value(Value::string(cmd, closure.span));
+            let send_stream_lines_lossy = |stream: nu_protocol::ByteStream| {
+                let span = stream.span();
+                match stream.into_bytes() {
+                    Ok(bytes) => {
+                        if bytes.is_empty() {
+                            return false;
+                        }
+
+                        let text = String::from_utf8_lossy(&bytes);
+                        for line in text.lines() {
+                            if matches!(rx_interrupt.try_recv(), Ok(Some(_))) {
+                                break;
+                            }
+
+                            let item =
+                                Arc::new(NuItem::new(context.clone(), Value::string(line, span)))
+                                    as Arc<dyn SkimItem>;
+
+                            if tx.send(vec![item]).is_err() {
+                                break;
+                            }
+                        }
+
+                        true
+                    }
+                    Err(err) => {
+                        let _ = tx.send(vec![Arc::new(NuItem::new(
+                            context.clone(),
+                            Value::error(err, span),
+                        )) as Arc<dyn SkimItem>]);
+                        true
+                    }
+                }
+            };
+
+            let run_closure = |stack: Stack, query: &str| {
+                let mut eval =
+                    ClosureEval::new(&context.engine_state, &stack, closure.item.clone());
+                eval.add_arg(Value::string(query, closure.span))
+                    .run_with_input(PipelineData::empty())
+            };
+
+            let output = run_closure((*context.stack).clone(), &cmd_query);
 
             match output {
                 Ok(PipelineData::ByteStream(stream, _)) => {
-                    let span = stream.span();
-                    if let Some(lines) = stream.lines() {
-                        for line in lines {
-                            if rx_interrupt.try_recv().is_ok() {
-                                break;
+                    if !send_stream_lines_lossy(stream) {
+                        // Some closures that call external commands only produce usable
+                        // output when stdout is collected into values on this stack.
+                        match run_closure((*context.stack).clone().collect_value(), &cmd_query) {
+                            Ok(PipelineData::ByteStream(stream, _)) => {
+                                let _ = send_stream_lines_lossy(stream);
                             }
-                            let items = match line {
-                                Ok(text) => vec![Arc::new(NuItem::new(
-                                    context.clone(),
-                                    Value::string(text, span),
-                                ))
-                                    as Arc<dyn SkimItem>],
-                                Err(err) => vec![Arc::new(NuItem::new(
-                                    context.clone(),
-                                    Value::error(err, span),
-                                ))
-                                    as Arc<dyn SkimItem>],
-                            };
-                            if tx.send(items).is_err() {
-                                break;
+                            Ok(output) => {
+                                let values = output.into_iter().collect::<Vec<Value>>();
+                                for value in values.into_iter() {
+                                    if matches!(rx_interrupt.try_recv(), Ok(Some(_))) {
+                                        break;
+                                    }
+                                    let item = Arc::new(NuItem::new(context.clone(), value))
+                                        as Arc<dyn SkimItem>;
+                                    if tx.send(vec![item]).is_err() {
+                                        break;
+                                    }
+                                }
                             }
+                            Err(err) => {
+                                let _ = tx.send(vec![Arc::new(NuItem::new(
+                                    context.clone(),
+                                    Value::error(err, closure.span),
+                                ))
+                                    as Arc<dyn SkimItem>]);
+                            }
+                        }
+                    }
+                }
+                Ok(PipelineData::Empty) => {
+                    match run_closure((*context.stack).clone().collect_value(), &cmd_query) {
+                        Ok(output) => {
+                            let values = output.into_iter().collect::<Vec<Value>>();
+                            for value in values.into_iter() {
+                                if matches!(rx_interrupt.try_recv(), Ok(Some(_))) {
+                                    break;
+                                }
+                                let item = Arc::new(NuItem::new(context.clone(), value))
+                                    as Arc<dyn SkimItem>;
+                                if tx.send(vec![item]).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let _ = tx.send(vec![Arc::new(NuItem::new(
+                                context.clone(),
+                                Value::error(err, closure.span),
+                            ))
+                                as Arc<dyn SkimItem>]);
                         }
                     }
                 }
                 Ok(output) => {
                     let values = output.into_iter().collect::<Vec<Value>>();
                     for value in values.into_iter() {
-                        if rx_interrupt.try_recv().is_ok() {
+                        if matches!(rx_interrupt.try_recv(), Ok(Some(_))) {
                             break;
                         }
                         let item =
@@ -279,5 +367,20 @@ impl CommandCollector for NuCommandCollector {
         });
 
         (rx, tx_interrupt)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::decode_skim_query_arg;
+
+    #[test]
+    fn decode_skim_query_arg_decodes_single_quoted_query() {
+        assert_eq!(decode_skim_query_arg("'abc'"), Some("abc".to_owned()));
+        assert_eq!(
+            decode_skim_query_arg("'has '\\'' quote'"),
+            Some("has ' quote".to_owned())
+        );
+        assert_eq!(decode_skim_query_arg("plain"), None);
     }
 }

@@ -46,6 +46,27 @@ fn input_skim_compiles_case_mode_switches() -> Result {
 }
 
 #[test]
+fn input_skim_interactive_short_flag_compiles() -> Result {
+    test().parse_and_compile("[Foo] | input skim -i --select-1 --query Foo")?;
+    Ok(())
+}
+
+#[test]
+fn input_skim_interactive_cmd_short_flags_compile() -> Result {
+    test().parse_and_compile(
+        "input skim -i --cmd-query 'hello world' --cmd {|q| rg $q --color=always}",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn input_skim_interactive_cmd_filter_returns_query_value() -> Result {
+    test()
+        .run("input skim --interactive --cmd-query toolkit --cmd {|q| [$q]} --filter toolkit")
+        .expect_value_eq("toolkit")
+}
+
+#[test]
 fn input_skim_preview_closure_is_lazy() -> Result {
     test()
         .run("[good bad] | input skim --select-1 --query good --preview {|r| if $r == 'good' { 'ok' } else { error make {msg: 'preview should be lazy'} }}")
