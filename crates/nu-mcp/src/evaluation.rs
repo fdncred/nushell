@@ -773,17 +773,15 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use nu_engine::eval_expression;
-    use nu_protocol::{
-        Value,
-    };
+    use nu_protocol::Value;
+    #[cfg(unix)]
+    use nu_protocol::engine::StateWorkingSet;
     #[cfg(unix)]
     use nu_protocol::{
         ShellError, Signature, SyntaxShape,
         engine::{Call, Command as NuCommand},
         shell_error::io::IoError,
     };
-    #[cfg(unix)]
-    use nu_protocol::engine::StateWorkingSet;
     #[cfg(unix)]
     use std::process::{Command as ProcessCommand, Stdio};
 
