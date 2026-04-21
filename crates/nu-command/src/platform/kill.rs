@@ -51,10 +51,24 @@ impl Command for Kill {
         call: &Call,
         _input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
-        let pids: Vec<i64> = call.rest(engine_state, stack, 0)?;
+        let mut pids: Vec<Spanned<i64>> = call.rest(engine_state, stack, 0)?;
         let force: bool = call.has_flag(engine_state, stack, "force")?;
-        let signal: Option<Spanned<i64>> = call.get_flag(engine_state, stack, "signal")?;
+        let mut signal: Option<Spanned<i64>> = call.get_flag(engine_state, stack, "signal")?;
         let quiet: bool = call.has_flag(engine_state, stack, "quiet")?;
+
+        if signal.is_none() && !pids.is_empty() {
+            let first = &pids[0];
+
+            if first.item == 0
+                && is_negative_zero_signal(engine_state.get_span_contents(first.span))
+            {
+                signal = Some(Spanned {
+                    item: 0,
+                    span: first.span,
+                });
+                pids.remove(0);
+            }
+        }
 
         if pids.is_empty() {
             return Err(ShellError::MissingParameter {
@@ -88,7 +102,7 @@ impl Command for Kill {
 
         let mut cmd = build_kill_command(
             force,
-            pids.iter().copied(),
+            pids.iter().copied().map(|spanned| spanned.item),
             signal.map(|spanned| spanned.item as u32),
         );
 
@@ -154,12 +168,28 @@ impl Command for Kill {
     }
 }
 
+// The token `-0` should be treated as signal shorthand in `kill -0 pid`.
+// The parser converts `-0` into integer 0, so we need raw-source detection
+// to distinguish it from a literal PID value of 0.
+fn is_negative_zero_signal(raw: &[u8]) -> bool {
+    raw.starts_with(b"-") && !raw[1..].is_empty() && raw[1..].iter().all(|b| *b == b'0')
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Kill;
+    use super::*;
 
     #[test]
     fn examples_work_as_expected() -> nu_test_support::Result {
         nu_test_support::test().examples(Kill)
+    }
+
+    #[test]
+    fn negative_zero_is_signal_token() {
+        assert!(is_negative_zero_signal(b"-0"));
+        assert!(is_negative_zero_signal(b"-00"));
+        assert!(is_negative_zero_signal(b"-000"));
+        assert!(!is_negative_zero_signal(b"0"));
+        assert!(!is_negative_zero_signal(b"-1"));
     }
 }
