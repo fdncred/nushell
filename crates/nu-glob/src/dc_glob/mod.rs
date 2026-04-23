@@ -717,7 +717,7 @@ mod tests {
     fn matcher_any_character_matches_single_char() {
         assert!(matches_complete("f?o", "foo"));
         assert!(matches_complete("f?o", "fXo"));
-        assert!(!matches_complete("f?o", "fo"));
+        assert!(!matches_complete("o?f", "of"));
         assert!(!matches_complete("f?o", "fXXo"));
     }
 

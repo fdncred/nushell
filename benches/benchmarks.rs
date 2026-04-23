@@ -185,7 +185,7 @@ fn setup_stack_and_engine_in_dir(path: &Path) -> (Stack, EngineState) {
     setup_stack_and_engine_from_command(&format!("cd {}", nu_string_literal(path)))
 }
 
-// Running benchmarks like this allow you to set the glob/ls bencharks root folder
+// Running benchmarks like this allow you to set the glob/ls benchmarks root folder
 // NU_GLOB_BENCH_ROOT=/Users/fdncred/src/nushell cargo bench --bench benchmarks -- solo --filter '*recursive*'
 fn glob_bench_source_root() -> PathBuf {
     env::var_os("NU_GLOB_BENCH_ROOT")
