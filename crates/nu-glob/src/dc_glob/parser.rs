@@ -242,11 +242,11 @@ fn node_repeat<'a, 'b>((mut string, out): NodeInput<'a, 'b>) -> NodeResult<'a, '
             if let Some(comma_index) = repeat_params_string.bytes().position(|byte| byte == b',') {
                 let (min_string, max_string) = repeat_params_string.split_at(comma_index);
                 let Ok(min): std::result::Result<u32, _> = min_string.parse() else {
-                    // unparseable number
+                    // number that cannot be parsed
                     fail!();
                 };
                 let Ok(max): std::result::Result<u32, _> = max_string[1..].parse() else {
-                    // unparseable number
+                    // number that cannot be parsed
                     fail!();
                 };
                 AstNode::Repeat {
@@ -256,7 +256,7 @@ fn node_repeat<'a, 'b>((mut string, out): NodeInput<'a, 'b>) -> NodeResult<'a, '
                 }
             } else {
                 let Ok(times): std::result::Result<u32, _> = repeat_params_string.parse() else {
-                    // unparseable number
+                    // number that cannot be parsed
                     fail!();
                 };
                 AstNode::Repeat {
