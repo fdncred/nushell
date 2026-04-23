@@ -23,6 +23,21 @@ use std::{
 const CHECK_CTRL_C_FREQUENCY: Duration = Duration::from_millis(100);
 const DEFAULT_WATCH_DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
 
+/// Unified glob pattern for watch --glob, routing between legacy and dc_glob backends.
+enum WatchGlob {
+    Legacy(nu_glob::Pattern),
+    DcGlob(nu_glob::dc_glob::DcPattern),
+}
+
+impl WatchGlob {
+    fn matches_path(&self, path: &Path) -> bool {
+        match self {
+            WatchGlob::Legacy(p) => p.matches_path(path),
+            WatchGlob::DcGlob(p) => p.matches_path(path),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Watch;
 
@@ -122,13 +137,22 @@ impl Command for Watch {
                 if verbose {
                     eprintln!("Absolute glob path: {absolute_path:?}");
                 }
-
-                nu_glob::Pattern::new(&absolute_path.to_string_lossy()).map_err(|_| {
-                    ShellError::TypeMismatch {
-                        err_message: "Glob pattern is invalid".to_string(),
-                        span: glob.span,
-                    }
-                })
+                let path_str = absolute_path.to_string_lossy();
+                if nu_experimental::DC_GLOB.get() {
+                    nu_glob::dc_glob::DcPattern::new(path_str.as_ref())
+                        .map(WatchGlob::DcGlob)
+                        .map_err(|_| ShellError::TypeMismatch {
+                            err_message: "Glob pattern is invalid".to_string(),
+                            span: glob.span,
+                        })
+                } else {
+                    nu_glob::Pattern::new(path_str.as_ref())
+                        .map(WatchGlob::Legacy)
+                        .map_err(|_| ShellError::TypeMismatch {
+                            err_message: "Glob pattern is invalid".to_string(),
+                            span: glob.span,
+                        })
+                }
             })
             .transpose()?;
 
@@ -207,7 +231,7 @@ impl Command for Watch {
 
             Ok(PipelineData::empty())
         } else {
-            fn glob_filter(glob: Option<&nu_glob::Pattern>, path: &Path) -> bool {
+            fn glob_filter(glob: Option<&WatchGlob>, path: &Path) -> bool {
                 let Some(glob) = glob else { return true };
                 glob.matches_path(path)
             }

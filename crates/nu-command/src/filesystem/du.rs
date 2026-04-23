@@ -1,6 +1,6 @@
-use crate::{DirBuilder, DirInfo, FileInfo};
+use crate::{DirBuilder, DirInfo, ExcludeGlob, FileInfo};
 use nu_engine::command_prelude::*;
-use nu_glob::{MatchOptions, Pattern};
+use nu_glob::MatchOptions;
 use nu_protocol::{NuGlob, PipelineMetadata, Signals};
 use serde::Deserialize;
 use std::path::Path;
@@ -187,12 +187,21 @@ fn du_for_one_pattern(
     signals: Signals,
 ) -> Result<impl Iterator<Item = Value> + Send + use<>, ShellError> {
     let exclude = args.exclude.map_or(Ok(None), move |x| {
-        Pattern::new(x.item.as_ref())
-            .map(Some)
-            .map_err(|e| ShellError::InvalidGlobPattern {
-                msg: e.msg.into(),
-                span: x.span,
-            })
+        if nu_experimental::DC_GLOB.get() {
+            nu_glob::dc_glob::DcPattern::new(x.item.as_ref())
+                .map(|p| Some(ExcludeGlob::DcGlob(p)))
+                .map_err(|e| ShellError::InvalidGlobPattern {
+                    msg: e.to_string(),
+                    span: x.span,
+                })
+        } else {
+            nu_glob::Pattern::new(x.item.as_ref())
+                .map(|p| Some(ExcludeGlob::Legacy(p)))
+                .map_err(|e| ShellError::InvalidGlobPattern {
+                    msg: e.msg.into(),
+                    span: x.span,
+                })
+        }
     })?;
     let glob_options = if args.all {
         None

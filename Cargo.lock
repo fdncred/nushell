@@ -4478,7 +4478,10 @@ dependencies = [
 name = "nu-glob"
 version = "0.112.3"
 dependencies = [
+ "anyhow",
  "doc-comment",
+ "log",
+ "rayon",
 ]
 
 [[package]]
@@ -4514,6 +4517,7 @@ dependencies = [
  "nu-cmd-lang",
  "nu-command",
  "nu-engine",
+ "nu-experimental",
  "nu-glob",
  "nu-parser",
  "nu-protocol",

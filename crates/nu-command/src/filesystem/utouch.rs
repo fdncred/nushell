@@ -1,7 +1,7 @@
 use chrono::{DateTime, FixedOffset};
 use filetime::FileTime;
 use nu_engine::command_prelude::*;
-use nu_glob::{glob, is_glob};
+use nu_engine::glob_is_glob;
 use nu_path::expand_path_with;
 use nu_protocol::{NuGlob, shell_error::generic::GenericError, shell_error::io::IoError};
 use std::path::PathBuf;
@@ -162,25 +162,29 @@ impl Command for UTouch {
                     continue;
                 }
 
-                let mut expanded_globs =
-                    glob(&file_path.to_string_lossy(), engine_state.signals().clone())
-                        .unwrap_or_else(|_| {
-                            panic!(
-                                "Failed to process file path: {}",
-                                &file_path.to_string_lossy()
-                            )
-                        })
-                        .peekable();
+                let (_, expanded_globs) = nu_engine::glob_from(
+                    file_glob,
+                    cwd.as_ref(),
+                    file_glob.span,
+                    None,
+                    engine_state.signals().clone(),
+                )?;
 
-                if expanded_globs.peek().is_none() {
-                    let file_name = file_path.file_name().unwrap_or_else(|| {
-                        panic!(
-                            "Failed to process file path: {}",
-                            &file_path.to_string_lossy()
-                        )
-                    });
+                let expanded_globs: Vec<PathBuf> = expanded_globs.filter_map(Result::ok).collect();
 
-                    if is_glob(&file_name.to_string_lossy()) {
+                if expanded_globs.is_empty() {
+                    let Some(file_name) = file_path.file_name() else {
+                        return Err(ShellError::Generic(GenericError::new(
+                            format!(
+                                "Could not process file path {}",
+                                file_path.to_string_lossy()
+                            ),
+                            "invalid file path",
+                            file_glob.span,
+                        )));
+                    };
+
+                    if glob_is_glob(&file_name.to_string_lossy()) {
                         return Err(ShellError::Generic(
                             GenericError::new(
                                 format!(
@@ -201,7 +205,7 @@ impl Command for UTouch {
                     continue;
                 }
 
-                input_files.extend(expanded_globs.filter_map(Result::ok).map(InputFile::Path));
+                input_files.extend(expanded_globs.into_iter().map(InputFile::Path));
             }
         }
 

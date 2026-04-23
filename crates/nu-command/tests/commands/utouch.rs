@@ -3,6 +3,7 @@ use filetime::FileTime;
 use nu_test_support::fs::{Stub, files_exist_at};
 use nu_test_support::nu;
 use nu_test_support::playground::{Dirs, Playground};
+use nu_test_support::prelude::*;
 use std::path::Path;
 
 // Use 1 instead of 0 because 0 has a special meaning in Windows
@@ -109,6 +110,21 @@ fn fails_when_glob_has_no_matches() {
 
         assert!(actual.err.contains("No matches found for glob *.txt"));
     })
+}
+
+#[test]
+#[exp(nu_experimental::DC_GLOB)]
+fn touch_glob_matches_when_dc_glob_enabled() -> Result {
+    Playground::setup("touch_glob_dc_glob", |dirs, sandbox| {
+        sandbox.with_files(&[Stub::EmptyFile("one.txt"), Stub::EmptyFile("two.txt")]);
+
+        let _: () = test()
+            .cwd(dirs.test())
+            .run("touch *.txt")
+            .expect("touch should accept matching globs with dc-glob enabled");
+    });
+
+    Ok(())
 }
 
 #[test]

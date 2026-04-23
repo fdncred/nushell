@@ -64,6 +64,8 @@
 )]
 #![deny(missing_docs)]
 
+pub mod dc_glob;
+
 #[cfg(test)]
 #[macro_use]
 extern crate doc_comment;
