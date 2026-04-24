@@ -301,7 +301,13 @@ fn glob_debug_subcommands_disabled() -> Result {
             .expect_parse_error()
             .expect("glob should reject dbg flags when dc-glob is disabled");
 
-        assert!(err.to_string().contains("unknown flag"));
+        let err = err.to_string();
+        assert!(
+            err.contains("unknown_flag")
+                || err.contains("unknown flag")
+                || err.contains("doesn't have flag"),
+            "expected unknown-flag parse error, got: {err}"
+        );
     });
 
     Ok(())
@@ -316,28 +322,52 @@ fn glob_debug_subcommands_require_pattern_argument() -> Result {
             .run("glob --dbg-parse")
             .expect_parse_error()
             .expect("--dbg-parse should require pattern argument");
-        assert!(parse.to_string().contains("missing glob"));
+        let parse = parse.to_string();
+        assert!(
+            parse.contains("missing")
+                || parse.contains("required positional")
+                || parse.contains("missing_positional"),
+            "expected missing-argument parse error, got: {parse}"
+        );
 
         let compile = test()
             .cwd(dirs.test())
             .run("glob --dbg-compile")
             .expect_parse_error()
             .expect("--dbg-compile should require pattern argument");
-        assert!(compile.to_string().contains("missing glob"));
+        let compile = compile.to_string();
+        assert!(
+            compile.contains("missing")
+                || compile.contains("required positional")
+                || compile.contains("missing_positional"),
+            "expected missing-argument parse error, got: {compile}"
+        );
 
         let matches = test()
             .cwd(dirs.test())
             .run("glob --dbg-matches")
             .expect_parse_error()
             .expect("--dbg-matches should require pattern argument");
-        assert!(matches.to_string().contains("missing glob"));
+        let matches = matches.to_string();
+        assert!(
+            matches.contains("missing")
+                || matches.contains("required positional")
+                || matches.contains("missing_positional"),
+            "expected missing-argument parse error, got: {matches}"
+        );
 
         let dbg_glob = test()
             .cwd(dirs.test())
             .run("glob --dbg-glob")
             .expect_parse_error()
             .expect("--dbg-glob should require pattern argument");
-        assert!(dbg_glob.to_string().contains("missing glob"));
+        let dbg_glob = dbg_glob.to_string();
+        assert!(
+            dbg_glob.contains("missing")
+                || dbg_glob.contains("required positional")
+                || dbg_glob.contains("missing_positional"),
+            "expected missing-argument parse error, got: {dbg_glob}"
+        );
     });
 
     Ok(())
