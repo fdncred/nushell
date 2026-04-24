@@ -219,11 +219,11 @@ fn glob_follow_symlinks() {
 #[exp(nu_experimental::DC_GLOB)]
 fn glob_dc_glob_supports_depth_and_exclude() -> Result {
     Playground::setup("glob_dc_depth_exclude", |dirs, sandbox| {
-        sandbox.with_files(&[EmptyFile("one.txt"), EmptyFile("two.txt")]);
+        sandbox.with_files(&[EmptyFile("three.txt"), EmptyFile("four.txt")]);
 
         test()
             .cwd(dirs.test())
-            .run("glob '*.txt' --depth 1 --exclude [two.txt] | length")
+            .run("glob '*.txt' --depth 1 --exclude [four.txt] | length")
             .expect_value_eq(1)
             .expect("glob should support --depth and --exclude with dc-glob enabled");
     });

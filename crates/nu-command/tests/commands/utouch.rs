@@ -112,16 +112,41 @@ fn fails_when_glob_has_no_matches() {
     })
 }
 
+// This test and the one below are nearly identical. I had problems with touch_glob_matches_when_dc_glob_enabled2
+// leaving one.txt and two.txt in the ./crates/nu-command directory instead of the sandbox location. So, let's
+// leave both of these for now but TODO come back and look again if files are being created in the right place and
+// if so we can remove one of this test.
 #[test]
 #[exp(nu_experimental::DC_GLOB)]
 fn touch_glob_matches_when_dc_glob_enabled() -> Result {
-    Playground::setup("touch_glob_dc_glob", |dirs, sandbox| {
-        sandbox.with_files(&[Stub::EmptyFile("one.txt"), Stub::EmptyFile("two.txt")]);
+    Playground::setup("touch_glob_dc_glob", |dirs, _sandbox| {
+        let _: () = test()
+            .cwd(dirs.test())
+            .run("touch one-a.txt two-a.txt; touch *.txt")
+            .expect("touch should accept matching globs with dc-glob enabled");
+
+        assert!(dirs.test().join("one-a.txt").exists());
+        assert!(dirs.test().join("two-a.txt").exists());
+        assert!(!dirs.test().join("*.txt").exists());
+    });
+
+    Ok(())
+}
+
+#[test]
+#[exp(nu_experimental::DC_GLOB)]
+fn touch_glob_matches_when_dc_glob_enabled2() -> Result {
+    Playground::setup("touch_glob_dc_glob2", |dirs, sandbox| {
+        sandbox.with_files(&[Stub::EmptyFile("one-b.txt"), Stub::EmptyFile("two-b.txt")]);
 
         let _: () = test()
             .cwd(dirs.test())
             .run("touch *.txt")
             .expect("touch should accept matching globs with dc-glob enabled");
+
+        assert!(dirs.test().join("one-b.txt").exists());
+        assert!(dirs.test().join("two-b.txt").exists());
+        assert!(!dirs.test().join("*.txt").exists());
     });
 
     Ok(())

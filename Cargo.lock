@@ -4434,6 +4434,7 @@ dependencies = [
  "nu-glob",
  "nu-path",
  "nu-protocol",
+ "nu-test-support",
  "nu-utils",
 ]
 

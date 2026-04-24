@@ -186,21 +186,11 @@ mod tests {
     use nu_protocol::{NuGlob, Signals, Span, Spanned};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-    static DC_GLOB_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct DcGlobResetGuard;
-
-    impl Drop for DcGlobResetGuard {
-        fn drop(&mut self) {
-            // SAFETY: tests must not leave global experimental options mutated.
-            unsafe { nu_experimental::DC_GLOB.unset() };
-        }
-    }
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
         let ts = SystemTime::now()
@@ -234,14 +224,8 @@ mod tests {
     }
 
     #[test]
+    #[exp(nu_experimental::DC_GLOB)]
     fn glob_from_dc_glob_remains_lazy_for_first_item() {
-        let lock = DC_GLOB_TEST_LOCK.get_or_init(|| Mutex::new(()));
-        let _guard = lock.lock().expect("dc-glob test lock poisoned");
-
-        // SAFETY: This test serializes access to global experimental options.
-        unsafe { nu_experimental::DC_GLOB.set(true) };
-        let _reset_guard = DcGlobResetGuard;
-
         let root = unique_test_dir("lazy_first_item");
         let root_create_result = fs::create_dir_all(&root);
         assert!(

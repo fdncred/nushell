@@ -3,7 +3,10 @@ use filetime::FileTime;
 use nu_engine::command_prelude::*;
 use nu_engine::glob_is_glob;
 use nu_path::expand_path_with;
-use nu_protocol::{NuGlob, shell_error::generic::GenericError, shell_error::io::IoError};
+use nu_protocol::{
+    NuGlob, shell_error::generic::GenericError, shell_error::io::ErrorKind,
+    shell_error::io::IoError,
+};
 use std::path::PathBuf;
 use uu_touch::{ChangeTimes, InputFile, Options, Source, error::TouchError};
 use uucore::{localized_help_template, translate};
@@ -25,7 +28,7 @@ impl Command for UTouch {
             .input_output_types(vec![ (Type::Nothing, Type::Nothing) ])
             .rest(
                 "files",
-                SyntaxShape::OneOf(vec![SyntaxShape::GlobPattern, SyntaxShape::Filepath]),
+                SyntaxShape::OneOf(vec![SyntaxShape::GlobPattern, SyntaxShape::String]),
                 "The file(s) to create. '-' is used to represent stdout."
             )
             .named(
@@ -87,7 +90,15 @@ impl Command for UTouch {
         let change_atime: bool = call.has_flag(engine_state, stack, "access")?;
         let no_create: bool = call.has_flag(engine_state, stack, "no-create")?;
         let no_deref: bool = call.has_flag(engine_state, stack, "no-deref")?;
-        let file_globs = call.rest::<Spanned<NuGlob>>(engine_state, stack, 0)?;
+        let file_globs = call
+            .rest::<Spanned<NuGlob>>(engine_state, stack, 0)
+            .map_err(|err| match err {
+                ShellError::CantConvert { span, .. } => ShellError::IncompatibleParametersSingle {
+                    msg: "requires file paths".to_string(),
+                    span,
+                },
+                _ => err,
+            })?;
         let cwd = engine_state.cwd(Some(stack))?;
 
         if file_globs.is_empty() {
@@ -158,19 +169,61 @@ impl Command for UTouch {
                     expand_path_with(file_glob.item.as_ref(), &cwd, file_glob.item.is_expand());
 
                 if !file_glob.item.is_expand() {
+                    if no_create && !file_path.exists() {
+                        continue;
+                    }
+
                     input_files.push(InputFile::Path(file_path));
                     continue;
                 }
 
-                let (_, expanded_globs) = nu_engine::glob_from(
+                let expanded_globs = match nu_engine::glob_from(
                     file_glob,
                     cwd.as_ref(),
                     file_glob.span,
                     None,
                     engine_state.signals().clone(),
-                )?;
+                ) {
+                    Ok((_, expanded_globs)) => expanded_globs,
+                    Err(err)
+                        if matches!(
+                            &err,
+                            ShellError::Io(IoError {
+                                kind: ErrorKind::Std(std::io::ErrorKind::NotFound, ..)
+                                    | ErrorKind::FileNotFound
+                                    | ErrorKind::DirectoryNotFound,
+                                ..
+                            })
+                        ) =>
+                    {
+                        let Some(file_name) = file_path.file_name() else {
+                            return Err(err);
+                        };
 
-                let expanded_globs: Vec<PathBuf> = expanded_globs.filter_map(Result::ok).collect();
+                        if glob_is_glob(&file_name.to_string_lossy()) {
+                            return Err(err);
+                        }
+
+                        if no_create && !file_path.exists() {
+                            continue;
+                        }
+
+                        input_files.push(InputFile::Path(file_path));
+                        continue;
+                    }
+                    Err(err) => return Err(err),
+                };
+
+                let expanded_globs: Vec<PathBuf> = expanded_globs
+                    .filter_map(Result::ok)
+                    .map(|path| {
+                        if path.is_absolute() {
+                            path
+                        } else {
+                            cwd.as_std_path().join(path)
+                        }
+                    })
+                    .collect();
 
                 if expanded_globs.is_empty() {
                     let Some(file_name) = file_path.file_name() else {
@@ -199,6 +252,10 @@ impl Command for UTouch {
                                 file_name.to_string_lossy()
                             )),
                         ));
+                    }
+
+                    if no_create && !file_path.exists() {
+                        continue;
                     }
 
                     input_files.push(InputFile::Path(file_path));

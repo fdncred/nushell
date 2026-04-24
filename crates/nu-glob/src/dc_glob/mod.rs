@@ -269,14 +269,14 @@ mod tests {
     fn glob_with_streams_and_matches_simple_pattern() {
         let root = unique_test_dir("basic");
         fs::create_dir_all(&root).expect("failed to create root test directory");
-        write_file(&root.join("one.txt"));
-        write_file(&root.join("two.md"));
+        write_file(&root.join("five.txt"));
+        write_file(&root.join("six.md"));
 
         let result = glob_with(root.as_path(), "*.txt", &GlobWalkOptions::default())
             .expect("glob_with should succeed");
         let paths = collect_ok_paths(result).expect("failed to collect streamed paths");
 
-        assert_eq!(paths, vec!["one.txt"]);
+        assert_eq!(paths, vec!["five.txt"]);
 
         let _ = fs::remove_dir_all(&root);
     }

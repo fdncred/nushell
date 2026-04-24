@@ -7,9 +7,11 @@ license = "MIT"
 name = "nu-engine"
 rust-version.workspace = true
 version = "0.112.3"
+autotests = false
 
 [lib]
 bench = false
+harness = false
 
 [lints]
 workspace = true
@@ -33,3 +35,6 @@ plugin = [
   "nu-protocol/plugin",
   "os",
 ]
+
+[dev-dependencies]
+nu-test-support = { path = "../nu-test-support", features = ["os"] }
