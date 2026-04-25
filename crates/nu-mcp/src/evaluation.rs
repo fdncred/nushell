@@ -773,12 +773,11 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use nu_engine::eval_expression;
-    use nu_protocol::Value;
     #[cfg(unix)]
     use nu_protocol::engine::StateWorkingSet;
     #[cfg(unix)]
     use nu_protocol::{
-        ShellError, Signature, SyntaxShape,
+        ShellError, Signature, SyntaxShape, Value,
         engine::{Call, Command as NuCommand},
         shell_error::io::IoError,
     };
@@ -1330,13 +1329,21 @@ mod tests {
         );
 
         // Original variable should still be 1 (forked state not committed)
-        let result = evaluator
+        let result_nuon = evaluator
             .eval_async("$x", CancellationToken::new())
             .await
             .unwrap();
-        assert!(
-            result.contains('1') && !result.contains("999"),
-            "Variable should still be 1 after promoted eval, got: {result}"
+        let result = nuon::from_nuon(&result_nuon, None).unwrap();
+        let output = result
+            .into_record()
+            .unwrap()
+            .remove("output")
+            .unwrap()
+            .into_string()
+            .unwrap();
+        assert_eq!(
+            output, "1",
+            "Variable should still be 1 after promoted eval, got: {result_nuon}"
         );
     }
 

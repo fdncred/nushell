@@ -20,7 +20,7 @@ use nu_protocol::{
         ImportPatternMember, Pipeline, PipelineElement,
     },
     category_from_string,
-    engine::{DEFAULT_OVERLAY_NAME, StateWorkingSet},
+    engine::{CommandType, DEFAULT_OVERLAY_NAME, StateWorkingSet},
     eval_const::eval_constant,
     parser_path::ParserPath,
     shell_error::generic::GenericError,
@@ -253,7 +253,13 @@ pub fn parse_def_predecl(working_set: &mut StateWorkingSet, spans: &[Span]) {
         signature.allows_unknown_args = true;
     }
 
-    let decl = signature.predeclare();
+    let command_type = if def_type_name == b"extern" {
+        CommandType::External
+    } else {
+        CommandType::Custom
+    };
+
+    let decl = signature.predeclare_with_command_type(command_type);
 
     if working_set.add_predecl(decl).is_some() {
         working_set.error(ParseError::DuplicateCommandDef(spans[name_pos]));
@@ -1813,13 +1819,19 @@ pub fn parse_export_env(
     (pipeline, Some(block_id))
 }
 
-fn collect_first_comments(tokens: &[Token]) -> Vec<Span> {
+fn collect_first_comments(working_set: &StateWorkingSet, tokens: &[Token]) -> Vec<Span> {
     let mut comments = vec![];
 
     let mut tokens_iter = tokens.iter().peekable();
     while let Some(token) = tokens_iter.next() {
         match token.contents {
             TokenContents::Comment => {
+                let comment = working_set.get_span_contents(token.span);
+
+                if comments.is_empty() && comment.starts_with(b"#!") {
+                    continue;
+                }
+
                 comments.push(token.span);
             }
             TokenContents::Eol => {
@@ -1856,7 +1868,7 @@ pub fn parse_module_block(
         working_set.error(err)
     }
 
-    let module_comments = collect_first_comments(&output);
+    let module_comments = collect_first_comments(working_set, &output);
 
     let (output, err) = lite_parse(&output, working_set);
     if let Some(err) = err {
@@ -2113,7 +2125,7 @@ fn parse_module_file(
         return None;
     };
 
-    let file_id = working_set.add_file(path.path().to_string_lossy().to_string(), &contents);
+    let file_id = working_set.add_file(&path.path().to_string_lossy(), &contents);
     let new_span = working_set.get_span_for_file(file_id);
 
     // Check if we've parsed the module before.
