@@ -1,9 +1,8 @@
 use std::{
-    path::PathBuf,
+    path::PathBuf, path::Path,
     sync::mpsc::{Receiver, RecvTimeoutError, channel},
     time::Duration,
 };
-
 use itertools::Either;
 use notify_debouncer_full::{
     DebouncedEvent, Debouncer, FileIdMap, new_debouncer,
@@ -12,7 +11,6 @@ use notify_debouncer_full::{
         event::{DataChange, ModifyKind, RenameMode},
     },
 };
-
 use nu_engine::{ClosureEval, command_prelude::*};
 use nu_protocol::{
     Signals, engine::Closure, report_shell_error, shell_error::generic::GenericError,
@@ -195,13 +193,12 @@ impl Command for Watch {
 
         let iter = WatchIterator::new(debouncer, rx, engine_state.signals().clone());
 
-        fn glob_filter(glob: Option<&nu_glob::Pattern>, ev: &WatchEvent) -> bool {
+        fn glob_filter(glob: Option<&WatchGlob>, ev: &WatchEvent) -> bool {
             let Some(glob) = glob else { return true };
-            let path = ev
-                .path
-                .as_deref()
-                .or(ev.new_path.as_deref())
-                .expect("at least one of path or new_path should be present");
+            let Some(path) = ev.path.as_deref().or(ev.new_path.as_deref()) else {
+                return false;
+            };
+
             glob.matches_path(path)
         }
 
