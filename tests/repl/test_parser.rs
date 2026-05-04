@@ -519,6 +519,60 @@ fn percent_requires_builtin(#[case] code: &str) -> Result {
 }
 
 #[test]
+fn percent_dynamic_dispatch_with_builtin() -> Result {
+    let code = "let cmd = 'echo'; %($cmd) 'hello'";
+    test().run(code).expect_value_eq("hello")
+}
+
+#[test]
+fn percent_dynamic_dispatch_bare_var() -> Result {
+    let code = "let cmd = 'echo'; %$cmd 'hello'";
+    test().run(code).expect_value_eq("hello")
+}
+
+#[test]
+fn percent_dynamic_dispatch_with_paren_expr() -> Result {
+    let code = "%('echo') 'world'";
+    test().run(code).expect_value_eq("world")
+}
+
+#[test]
+fn percent_dynamic_dispatch_with_non_builtin() -> Result {
+    let code = "let cmd = 'my_nonexistent_cmd'; %($cmd)";
+    let err = test().run(code).expect_error()?;
+    assert!(matches!(err, ShellError::CommandNotFound { .. }));
+    Ok(())
+}
+
+#[test]
+fn percent_dynamic_dispatch_with_custom_command() -> Result {
+    let code = "def custom_cmd [] { 'nope' }; let cmd = 'custom_cmd'; %($cmd)";
+    let err = test().run(code).expect_error()?;
+    assert!(matches!(err, ShellError::CommandNotFound { .. }));
+    Ok(())
+}
+
+#[test]
+fn percent_dynamic_dispatch_prefers_builtin_when_custom_shadows_name() -> Result {
+    let code = "def echo [] { 'shadowed' }; let cmd = 'echo'; %($cmd) 'hello'";
+    test().run(code).expect_value_eq("hello")
+}
+
+#[test]
+fn percent_dynamic_dispatch_prefers_builtin_inside_same_name_wrapper() -> Result {
+    let code = "def echo [] { 'shadowed' }; def wrapper [cmd] { %($cmd) 'hello' }; wrapper 'echo'";
+    test().run(code).expect_value_eq("hello")
+}
+
+#[test]
+fn percent_dynamic_dispatch_alias_to_custom_command_is_not_builtin() -> Result {
+    let code = "def custom_cmd [] { 'shadowed' }; alias maybe_builtin = custom_cmd; let cmd = 'maybe_builtin'; %($cmd)";
+    let err = test().run(code).expect_error()?;
+    assert!(matches!(err, ShellError::CommandNotFound { .. }));
+    Ok(())
+}
+
+#[test]
 fn string_interpolation_paren_test() -> TestResult {
     run_test(r#"$"('(')(')')""#, "()")
 }
