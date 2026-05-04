@@ -150,6 +150,33 @@ pub fn parse_keyword(working_set: &mut StateWorkingSet, lite_command: &LiteComma
     }
 }
 
+fn rest_param_is_type_annotated(signature_source: &[u8], rest_name: &str) -> bool {
+    let mut needle = Vec::with_capacity(rest_name.len() + 3);
+    needle.extend_from_slice(b"...");
+    needle.extend_from_slice(rest_name.as_bytes());
+
+    if signature_source.len() < needle.len() {
+        return false;
+    }
+
+    for start in 0..=(signature_source.len() - needle.len()) {
+        if signature_source[start..start + needle.len()] != needle {
+            continue;
+        }
+
+        let mut idx = start + needle.len();
+        while idx < signature_source.len() && signature_source[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+
+        if idx < signature_source.len() && signature_source[idx] == b':' {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn parse_def_predecl(working_set: &mut StateWorkingSet, spans: &[Span]) {
     let mut pos = 0;
 
@@ -250,6 +277,14 @@ pub fn parse_def_predecl(working_set: &mut StateWorkingSet, spans: &[Span]) {
     signature.name = name;
 
     if allow_unknown_args {
+        if let Some(rest) = &mut signature.rest_positional
+            && !rest_param_is_type_annotated(
+                working_set.get_span_contents(spans[signature_pos]),
+                &rest.name,
+            )
+        {
+            rest.shape = SyntaxShape::ExternalArgument;
+        }
         signature.allows_unknown_args = true;
     }
 
@@ -713,7 +748,14 @@ fn parse_def_inner(
 
     if let (Some(mut signature), Some(block_id)) = (sig.as_signature(), block.as_block()) {
         if has_wrapped {
-            if let Some(rest) = &signature.rest_positional {
+            if let Some(rest) = &mut signature.rest_positional {
+                if !rest_param_is_type_annotated(
+                    working_set.get_span_contents(sig.span),
+                    &rest.name,
+                ) {
+                    rest.shape = SyntaxShape::ExternalArgument;
+                }
+
                 if let Some(var_id) = rest.var_id {
                     let rest_var = &working_set.get_variable(var_id);
 
@@ -1819,13 +1861,19 @@ pub fn parse_export_env(
     (pipeline, Some(block_id))
 }
 
-fn collect_first_comments(tokens: &[Token]) -> Vec<Span> {
+fn collect_first_comments(working_set: &StateWorkingSet, tokens: &[Token]) -> Vec<Span> {
     let mut comments = vec![];
 
     let mut tokens_iter = tokens.iter().peekable();
     while let Some(token) = tokens_iter.next() {
         match token.contents {
             TokenContents::Comment => {
+                let comment = working_set.get_span_contents(token.span);
+
+                if comments.is_empty() && comment.starts_with(b"#!") {
+                    continue;
+                }
+
                 comments.push(token.span);
             }
             TokenContents::Eol => {
@@ -1862,7 +1910,7 @@ pub fn parse_module_block(
         working_set.error(err)
     }
 
-    let module_comments = collect_first_comments(&output);
+    let module_comments = collect_first_comments(working_set, &output);
 
     let (output, err) = lite_parse(&output, working_set);
     if let Some(err) = err {
