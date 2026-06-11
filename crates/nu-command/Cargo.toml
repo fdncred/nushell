@@ -132,6 +132,7 @@ ureq = { workspace = true, default-features = false, features = [
 ], optional = true }
 url = { workspace = true }
 uu_cp = { workspace = true, optional = true }
+uu_ls = { workspace = true, optional = true }
 uu_mkdir = { workspace = true, optional = true }
 uu_mktemp = { workspace = true, optional = true }
 uu_mv = { workspace = true, optional = true }
@@ -210,6 +211,7 @@ os = [
 	"os_pipe",
 	"reedline",
 	"uu_cp",
+	"uu_ls",
 	"uu_mkdir",
 	"uu_mktemp",
 	"uu_mv",

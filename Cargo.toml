@@ -270,6 +270,7 @@ unicode-width = "0.2"
 ureq = { version = "~3.3.0", default-features = false, features = ["socks-proxy"] }
 url = "2.5"
 uu_cp = "0.9.0"
+uu_ls = "0.9.0"
 uu_mkdir = "0.9.0"
 uu_mktemp = "0.9.0"
 uu_mv = "0.9.0"
