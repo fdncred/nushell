@@ -10,6 +10,8 @@ mod signals;
 mod terminal;
 mod test_bins;
 
+#[cfg(feature = "lsp")]
+use crate::run::run_lsp;
 use crate::{
     command::parse_cli_args_from_env,
     config_files::set_config_path,
@@ -19,7 +21,6 @@ use log::{Level, trace};
 use miette::Result;
 use nu_cli::gather_parent_env_vars;
 use nu_engine::{convert_env_values, exit::cleanup_exit};
-use nu_lsp::LanguageServer;
 use nu_path::absolute_with;
 use nu_protocol::{
     ByteStream, Config, IntoValue, PipelineData, ShellError, Span, Spanned, Type, Value,
@@ -32,6 +33,7 @@ use run::{run_commands, run_file, run_repl};
 use signals::ctrlc_protection;
 use std::{
     borrow::Cow,
+    io::Write,
     path::{PathBuf, absolute},
     str::FromStr,
     sync::Arc,
@@ -71,14 +73,63 @@ fn current_dir_from_environment() -> PathBuf {
     }
 }
 
+/// Mirror of miette's private `Panic` diagnostic so we keep the
+/// `RUST_BACKTRACE=1` help text and backtrace rendering when reporting a panic.
+#[derive(Debug)]
+struct Panic(String);
+
+impl std::fmt::Display for Panic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let backtrace = std::backtrace::Backtrace::capture();
+        if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+            write!(f, "{}\n{backtrace}", self.0)
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+
+impl std::error::Error for Panic {}
+
+impl miette::Diagnostic for Panic {
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(
+            "set the `RUST_BACKTRACE=1` environment variable to display a backtrace.",
+        ))
+    }
+}
+
 fn main() -> Result<()> {
     let entire_start_time = nu_utils::time::Instant::now();
     let mut start_time = nu_utils::time::Instant::now();
-    miette::set_panic_hook();
-    let miette_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |x| {
-        crossterm::terminal::disable_raw_mode().expect("unable to disable raw mode");
-        miette_hook(x);
+    // Replicated from `miette::set_panic_hook`, but writes via `writeln!(io::stderr(), …)`
+    // instead of `eprintln!`. `eprintln!`/`println!` panic on a broken stderr/stdout
+    // (parent terminal/pty closed), so when our parent (Codex, Ghostty, an MCP host, …)
+    // exits and closes our pipes, the original hook re-panics from inside the panic
+    // handler — and Rust escalates the double-panic to `abort()`, producing a crash
+    // report for what should be a clean shutdown.
+    std::panic::set_hook(Box::new(|info| {
+        use miette::Context;
+
+        // Best-effort terminal restore; never panic from inside the hook.
+        let _ = crossterm::terminal::disable_raw_mode();
+
+        let mut message = "Something went wrong".to_string();
+        let payload = info.payload();
+        if let Some(msg) = payload.downcast_ref::<&str>() {
+            message = (*msg).to_string();
+        } else if let Some(msg) = payload.downcast_ref::<String>() {
+            message.clone_from(msg);
+        }
+
+        let mut report: miette::Result<()> = Err(Panic(message).into());
+        if let Some(loc) = info.location() {
+            report = report
+                .with_context(|| format!("at {}:{}:{}", loc.file(), loc.line(), loc.column()));
+        }
+        if let Err(err) = report.with_context(|| "Main thread panicked.".to_string()) {
+            let _ = writeln!(std::io::stderr(), "Error: {err:?}");
+        }
     }));
 
     let engine_state = EngineState::new();
@@ -211,16 +262,20 @@ fn main() -> Result<()> {
     #[cfg(feature = "sqlite")]
     db.last_insert_rowid();
 
+    #[cfg(feature = "lsp")]
+    let is_lsp = parsed_nu_cli_args.lsp;
+    #[cfg(not(feature = "lsp"))]
+    let is_lsp = false;
+    engine_state.is_lsp = is_lsp;
     // keep this condition in sync with the branches at the end
     engine_state.is_interactive = parsed_nu_cli_args.interactive_shell.is_some()
         || (parsed_nu_cli_args.testbin.is_none()
             && parsed_nu_cli_args.commands.is_none()
             && script_name.is_empty()
-            && !parsed_nu_cli_args.lsp);
+            && !is_lsp);
 
     engine_state.is_login = parsed_nu_cli_args.login_shell.is_some();
     engine_state.history_enabled = parsed_nu_cli_args.no_history.is_none();
-    engine_state.is_lsp = parsed_nu_cli_args.lsp;
 
     let use_color = engine_state
         .get_config()
@@ -578,24 +633,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if parsed_nu_cli_args.lsp {
-        perf!("lsp starting", start_time, use_color);
+    #[cfg(feature = "lsp")]
+    if is_lsp {
+        start_time = nu_utils::time::Instant::now();
+        return run_lsp(engine_state, parsed_nu_cli_args, use_color, start_time);
+    }
 
-        if parsed_nu_cli_args.no_config_file.is_none() {
-            let mut stack = nu_protocol::engine::Stack::new();
-            config_files::setup_config(
-                &mut engine_state,
-                &mut stack,
-                #[cfg(feature = "plugin")]
-                parsed_nu_cli_args.plugin_file,
-                parsed_nu_cli_args.config_file,
-                parsed_nu_cli_args.env_file,
-                false,
-            );
-        }
-
-        LanguageServer::initialize_stdio_connection(engine_state)?.serve_requests()?
-    } else if let Some(commands) = parsed_nu_cli_args.commands.clone() {
+    if let Some(commands) = parsed_nu_cli_args.commands.clone() {
         run_commands(
             &mut engine_state,
             stack,

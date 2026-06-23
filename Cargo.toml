@@ -129,6 +129,7 @@ nu_plugin_query = { path = "crates/nu_plugin_query", version = "0.113.2", defaul
 nu_plugin_stress_internals = { path = "crates/nu_plugin_stress_internals", version = "0.113.2", default-features = false }
 nuon = { path = "crates/nuon", version = "0.113.2", default-features = false }
 
+aegis-password-generator = "0.1.1"
 alphanumeric-sort = "1.5"
 ansi-str = "0.9"
 anyhow = "1.0.102"
@@ -160,7 +161,7 @@ encoding_rs = "0.8"
 fancy-regex = "0.18"
 filesize = "0.2"
 filetime = "0.2.27"
-fff-search = { version = "=0.9.0", default-features = false }
+fff-search = { version = "=0.9.6", default-features = false }
 fluent = "0.17.0"
 fuzzy-matcher = { version = "^0.3.7" }
 gatekeeper = "3.0.0"
@@ -173,7 +174,7 @@ indicatif = "0.18.4"
 indoc = "2"
 interprocess = "2.4.2"
 is_executable = "1.0.5"
-itertools = "0.14"
+itertools = "0.15"
 kitest = "0.5.0"
 lean_string = { version = "0.6.0", features = ["serde"] }
 lexopt = "0.3.2"
@@ -253,7 +254,7 @@ strip-ansi-escapes = "0.2.1"
 strum = "0.27.0"
 strum_macros = "0.27.0"
 syn = "2.0.117"
-sysinfo = "0.38.4"
+sysinfo = "0.39.3"
 tabled = { version = "0.21", default-features = false }
 tempfile = "3.27"
 thiserror = "2.0.18"
@@ -280,15 +281,16 @@ uu_uname = "0.9.0"
 uucore = "0.9.0"
 uuid = "1.23.1"
 v_htmlescape = "0.15.8"
+memchr = "2.8.0"
 wax = "0.7.0"
 web-time = "1.1.0"
+webpki-roots = "1.0.7"
 which = "8.0.2"
 win_uds = "=0.2.2"
 windows = "0.62.2"
 windows-sys = "0.61.2"
+winnow = "1.0"
 winreg = "0.56"
-memchr = "2.8.0"
-webpki-roots = "1.0.7"
 
 [workspace.lints.clippy]
 # Warning: workspace lints affect library code as well as tests, so don't enable lints that would be too noisy in tests like that.
@@ -317,7 +319,7 @@ nu-command = { workspace = true, features = ["os"] }
 nu-engine = { workspace = true, features = ["os"] }
 nu-experimental = { workspace = true }
 nu-explore = { workspace = true }
-nu-lsp = { workspace = true }
+nu-lsp = { workspace = true, optional = true }
 nu-parser = { workspace = true }
 nu-path = { workspace = true }
 nu-plugin-engine = { workspace = true, features = ["local-socket"], optional = true }
@@ -372,13 +374,14 @@ tempfile = { workspace = true }
 # Enable all features while still avoiding mutually exclusive features.
 # Use this if `--all-features` fails.
 full = [
+  "lsp",
+  "mcp",
   "network",
   "plugin",
   "rustls-tls",
   "sqlite",
   "system-clipboard",
   "trash-support",
-  "mcp",
 ]
 
 plugin = [
@@ -395,6 +398,8 @@ plugin = [
   "nu-protocol/plugin",
 ]
 
+lsp = ["dep:nu-lsp"]
+
 mcp = [
   "dep:nu-mcp",
   "nu-mcp/mcp",
@@ -405,12 +410,13 @@ native-tls = ["nu-command/native-tls"]
 rustls-tls = ["nu-command/rustls-tls"]
 
 default = [
-  "plugin",
-  "trash-support",
-  "sqlite",
-  "network",
-  "rustls-tls",
+  "lsp",
   "mcp",
+  "network",
+  "plugin",
+  "rustls-tls",
+  "sqlite",
+  "trash-support",
 ]
 stable = ["default"]
 # NOTE: individual features are also passed to `nu-cmd-lang` that uses them to generate the feature matrix in the `version` command
@@ -466,7 +472,7 @@ bench = false
 # To use a development version of a dependency please use a global override here
 # changing versions in each sub-crate of the workspace is tedious
 [patch.crates-io]
-# reedline = { git = "https://github.com/nushell/reedline", branch = "main" }
+reedline = { git = "https://github.com/nushell/reedline", branch = "main" }
 # nu-ansi-term = { git = "https://github.com/nushell/nu-ansi-term.git", branch = "main" }
 
 # Run all benchmarks with `cargo bench`
