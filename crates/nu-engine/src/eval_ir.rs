@@ -288,12 +288,13 @@ fn eval_ir_block_impl<D: DebugContext>(
         // So `scope` can match inlined keyword-body bindings via ScopeRegion.
         ctx.stack.ir_instruction_index = Some(pc);
 
-        D::enter_instruction(ctx.engine_state, ir_block, pc, ctx.registers);
+        D::enter_instruction(ctx.engine_state, ctx.stack, ir_block, pc, ctx.registers);
 
         let result = eval_instruction::<D>(ctx, instruction, span, ast, need_backtrace);
 
         D::leave_instruction(
             ctx.engine_state,
+            ctx.stack,
             ir_block,
             pc,
             ctx.registers,
@@ -850,7 +851,7 @@ fn eval_instruction<D: DebugContext>(
             let list_span = list_value.span();
             let items_span = items.span();
             let items = match items {
-                Value::List { vals, .. } => vals,
+                Value::List { vals, .. } => vals.into_owned(),
                 Value::Nothing { .. } => Vec::new(),
                 _ => return Err(ShellError::CannotSpreadAsList { span: items_span }),
             };

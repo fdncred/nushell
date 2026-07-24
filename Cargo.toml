@@ -165,7 +165,7 @@ encoding_rs = "0.8"
 fancy-regex = "0.18"
 filesize = "0.2"
 filetime = "0.2.27"
-fff-search = { version = "=0.10.0", default-features = false, features = ["ripgrep"] }
+fff-search = { version = "=0.10.1", default-features = false, features = ["ripgrep"] }
 fluent = "0.17.0"
 gatekeeper = "3.0.0"
 heck = "0.5.0"
@@ -257,15 +257,15 @@ serde_json = "1.0.149"
 serde_urlencoded = "0.7.1"
 sha2 = "0.11.0"
 strip-ansi-escapes = "0.2.1"
-strum = { version = "0.27.0", features = ["derive"] }
-strum_macros = "0.27.0"
+strum = { version = "0.28.0", features = ["derive"] }
+strum_macros = "0.28.0"
 syn = "3.0.2"
 sysinfo = "0.39.3"
 tabled = { version = "0.21", default-features = false }
 tempfile = "3.27"
-thiserror = "2.0.18"
+thiserror = "2.0.19"
 titlecase = "3.6"
-tokio = { version = "1.52.1" }
+tokio = { version = "1.53.1" }
 toml = "1.1.2"
 toml_edit = "0.25.11"
 kdl = "6.7.1"
@@ -297,13 +297,18 @@ windows-sys = "0.61.2"
 winnow = "1.0"
 winreg = "0.56"
 
+[workspace.lints.rust]
+# This denies all rustc warnings (including the ones that were causing noise)
+# equivalent to -D warnings
+warnings = "warn"
+
 [workspace.lints.clippy]
 # Warning: workspace lints affect library code as well as tests, so don't enable lints that would be too noisy in tests like that.
 # todo = "warn"
 format_push_string = "warn"
 needless_raw_strings = "warn"
 result_large_err = "allow"
-unchecked_time_subtraction = "warn"
+unchecked_time_subtraction = "deny"
 unwrap_used = "deny"
 used_underscore_binding = "warn"
 # need to allow this temporarily because it may change code logic.
