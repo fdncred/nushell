@@ -278,7 +278,10 @@ fn snippet_at(src: &[u8], span: Span) -> &str {
 fn assert_labeled_contains(err: &ParseError, error_sub: &str, label_sub: &str) -> Span {
     match err {
         ParseError::LabeledErrorWithHelp {
-            error, label, span, ..
+            error,
+            label,
+            help,
+            span,
         } => {
             assert!(
                 error.contains(error_sub),
@@ -287,6 +290,11 @@ fn assert_labeled_contains(err: &ParseError, error_sub: &str, label_sub: &str) -
             assert!(
                 label.contains(label_sub),
                 "label missing {label_sub:?}: {label}"
+            );
+            // Reshape diagnostics must offer dual repair (remove closer or add opener).
+            assert!(
+                help.contains("if it is extra") && help.contains("or add"),
+                "help should be dual remove/add, got: {help}"
             );
             *span
         }
@@ -468,7 +476,7 @@ fn parse_missing_if_open_brace_points_at_condition() {
     // after `if` (defs.nu `env-nu` pattern).
     let file = b"def f [] {\n  each {|r|\n    if $x != string\n      $r\n    }\n  }\n}\n";
     let err = parse_first_error(file);
-    let span = assert_labeled_contains(&err, "Missing `{` to open a block", "expected `{`");
+    let span = assert_labeled_contains(&err, "Unexpected `}`", "possible place for `{`");
     assert_eq!(
         line_of(file, span.start),
         3,
@@ -481,7 +489,7 @@ fn parse_missing_if_open_brace_points_at_condition() {
     );
 }
 
-/// while / try / for / match / else-if should get the same missing-`{` presentation.
+/// while / try / for / match / else-if should get the same unexpected-`}` presentation.
 #[rstest]
 #[case::while_missing_brace(b"def f [] {\n  while $true\n    1\n  }\n}\n")]
 #[case::try_missing_brace(b"def f [] {\n  try\n    1\n  }\n}\n")]
@@ -492,7 +500,7 @@ fn parse_missing_if_open_brace_points_at_condition() {
 #[case::else_if_missing_brace(b"def f [] {\n  if $true { 1 }\n  else if $false\n    2\n  }\n}\n")]
 fn parse_missing_open_brace_control_flow_variants(#[case] file: &[u8]) {
     let err = parse_first_error(file);
-    let span = assert_labeled_contains(&err, "Missing `{` to open a block", "expected `{`");
+    let span = assert_labeled_contains(&err, "Unexpected `}`", "possible place for `{`");
     assert!(
         line_of(file, span.start) <= 5,
         "error too far from condition, line {} err={err:?}",
@@ -519,7 +527,7 @@ def f [] {\n\
     }\n\
 }\n";
     let err = parse_first_error(file);
-    let span = assert_labeled_contains(&err, "Missing `{` to open a record", "expected `{`");
+    let span = assert_labeled_contains(&err, "Unexpected `}`", "possible place for `{`");
     assert_eq!(
         line_of(file, span.start),
         4,
@@ -564,7 +572,7 @@ fn lex_mismatched_closer_paren_closed_with_bracket() {
 
 #[test]
 fn lex_mismatched_closer_brace_closed_with_paren() {
-    // Wrong closer for a record/block. Presentation may reshape to missing-`(`,
+    // Wrong closer for a record/block. Presentation may reshape to unexpected-`)`,
     // but must still be a real stack failure (never silent).
     let file = b"{ a: 1 )";
     let err = lex(file, 0, &[], &[], true)
@@ -575,13 +583,17 @@ fn lex_mismatched_closer_brace_closed_with_paren() {
             assert_eq!(*close, ")");
             assert_eq!(*open, "{");
         }
-        ParseError::LabeledErrorWithHelp { error, .. } => {
+        ParseError::LabeledErrorWithHelp { error, help, .. } => {
             assert!(
-                error.contains("Missing `(`"),
+                error.contains("Unexpected `)`"),
                 "unexpected labeled error: {error}"
             );
+            assert!(
+                help.contains("if it is extra") && help.contains("or add"),
+                "help should be dual remove/add, got: {help}"
+            );
         }
-        other => panic!("expected Unbalanced or Missing `(`, got {other:?}"),
+        other => panic!("expected Unbalanced or Unexpected `)`, got {other:?}"),
     }
 }
 
@@ -596,10 +608,11 @@ fn lex_mismatched_bracket_inside_block_with_sig_brackets() {
 
 #[test]
 fn parse_missing_open_paren_points_at_grouped_expr() {
-    // `print -n ansi green)` — missing `(` before `ansi` (defs.nu bar pattern).
+    // `print -n ansi green)` — likely insert site before `ansi` (defs.nu bar pattern).
+    // Message stays dual-path: remove `)` or add `(`.
     let file = b"def f [] {\n  if $x {\n        print -n ansi green)\n  }\n}\n";
     let err = parse_first_error(file);
-    let span = assert_labeled_contains(&err, "Missing `(` to open a group", "expected `(`");
+    let span = assert_labeled_contains(&err, "Unexpected `)`", "possible place for `(`");
     assert_eq!(
         snippet_at(file, span).chars().next(),
         Some('a'),
@@ -609,9 +622,37 @@ fn parse_missing_open_paren_points_at_grouped_expr() {
 }
 
 #[test]
+fn parse_extra_paren_help_is_dual_remove_or_add() {
+    // Review cases: remove is often correct, but help must not only say "add `(`".
+    for file in [b"1 + 2)" as &[u8], b"let x = 1)", b"{ a: 1 ) }"] {
+        let err = parse_first_error(file);
+        match &err {
+            ParseError::Unbalanced(_, close, _, help) => {
+                assert_eq!(*close, ")");
+                assert!(
+                    help.contains("if it is extra") && help.contains("or add"),
+                    "unbalanced help should be dual remove/add, got: {help}"
+                );
+            }
+            ParseError::LabeledErrorWithHelp { error, help, .. } => {
+                assert!(
+                    error.contains("Unexpected `)`"),
+                    "unexpected labeled error: {error}"
+                );
+                assert!(
+                    help.contains("if it is extra") && help.contains("or add"),
+                    "labeled help should be dual remove/add, got: {help}"
+                );
+            }
+            other => panic!("expected Unbalanced or Unexpected `)` for {file:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn parse_balanced_parens_with_extra_close_stays_unbalanced() {
     // `print (ansi green))` has a balanced group then an extra `)` — must not
-    // reshape into "Missing `(`".
+    // reshape into unexpected-`)` insert-site labeling.
     let file = b"def f [] { print (ansi green)) }\n";
     let err = parse_first_error(file);
     match &err {
@@ -623,7 +664,7 @@ fn parse_balanced_parens_with_extra_close_stays_unbalanced() {
             );
         }
         ParseError::LabeledErrorWithHelp { error, .. } => {
-            panic!("extra `)` must not reshape to missing open: {error}");
+            panic!("extra `)` must not reshape to insert-site label: {error}");
         }
         other => panic!("expected Unbalanced for extra `)`, got {other:?}"),
     }
@@ -639,10 +680,10 @@ fn parse_try_identifier_prefix_not_missing_brace() {
 
 #[test]
 fn parse_missing_list_open_bracket_points_at_list_start() {
-    // `2 (x - 2) 0]` inside an if block — missing leading `[`.
+    // `2 (x - 2) 0]` inside an if block — likely insert site at list start.
     let file = b"def f [] {\n  if $x {\n      2 ($in_ten - 2) 0]\n  }\n}\n";
     let err = parse_first_error(file);
-    let span = assert_labeled_contains(&err, "Missing `[` to open a list", "expected `[`");
+    let span = assert_labeled_contains(&err, "Unexpected `]`", "possible place for `[`");
     assert_eq!(
         snippet_at(file, span).chars().next(),
         Some('2'),

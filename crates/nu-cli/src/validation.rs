@@ -19,7 +19,7 @@ impl Validator for NuValidator {
         // typing a multi-line construct (e.g. an open `{` in the REPL).
         //
         // Lex presentation may reshape some stack failures (extra `}` / `)` / `]`)
-        // into `LabeledErrorWithHelp` ("Missing `{`/`[`/`(`…"). Those are complete
+        // into `LabeledErrorWithHelp` ("Unexpected `}`/`]`/`)`…"). Those are complete
         // but wrong inputs, not mid-edit unclosed forms — keep them Complete so the
         // REPL submits the line and shows the diagnostic instead of waiting for more
         // input. Only extend Incomplete if a new reshape intentionally represents

@@ -139,9 +139,10 @@ fn let_raw_string() {
 #[test]
 fn let_malformed_type() {
     let actual = nu!("let foo: )a");
-    // Unexpected `)` — may surface as unbalanced or missing-`(` presentation.
+    // Unexpected `)` — may surface as unbalanced or reshape presentation.
     assert!(
         actual.err.contains("unbalanced with `(`")
+            || actual.err.contains("Unexpected `)`")
             || actual.err.contains("Missing `(`")
             || actual.err.contains("Unbalanced delimiter"),
         "unexpected err: {}",

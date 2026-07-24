@@ -807,7 +807,7 @@ fn default_unclosed_help(delimiter: &str, structure_hint: Option<&str>) -> Strin
 
 fn default_unbalanced_help(open: &str, close: &str) -> String {
     format!(
-        "Remove this `{close}`, or add a matching `{open}` earlier. If you closed a block too early, the real mistake may be above."
+        "Remove this `{close}` if it is extra, or add a matching `{open}` earlier. If you closed a block too early, the real mistake may be above."
     )
 }
 

@@ -122,20 +122,23 @@ fn unbalanced_closer(
         && let Some((kind, span)) =
             find_missing_open_brace_above(input, span_offset, token_start, close_span)
     {
+        // Dual remove/add help: we cannot know whether the user forgot `{` or
+        // has an extra `}`. Point at a likely insert site; let the message stay
+        // non-committal about which repair is correct.
         return match kind {
             MissingOpenBraceKind::ControlFlow => ParseError::LabeledErrorWithHelp {
-                error: "Missing `{` to open a block".into(),
-                label: "expected `{` after this condition".into(),
-                help: "Add `{` after the `if` / `else if` / `while` / `for` / `try` / `match` condition. \
-                       Without it, a later `}` has nothing to close."
+                error: "Unexpected `}`".into(),
+                label: "possible place for `{` after this condition".into(),
+                help: "Remove this `}` if it is extra, or add `{` after the \
+                       `if` / `else if` / `while` / `for` / `try` / `match` condition."
                     .into(),
                 span,
             },
             MissingOpenBraceKind::Record => ParseError::LabeledErrorWithHelp {
-                error: "Missing `{` to open a record".into(),
-                label: "expected `{` here".into(),
-                help: "Record fields look like `{ key: value }`. \
-                       Without the opening `{`, a later `}` has nothing to close."
+                error: "Unexpected `}`".into(),
+                label: "possible place for `{`".into(),
+                help: "Remove this `}` if it is extra, or add `{` before the record fields \
+                       (e.g. `{ key: value }`)."
                     .into(),
                 span,
             },
@@ -144,7 +147,7 @@ fn unbalanced_closer(
 
     // Unexpected `]` with no open `[` on the stack (often inside a `{` block).
     // If this line looks like list elements ending in `]` without a `[`, point
-    // at where `[` should start — e.g. `2 ($in_ten - 2) 0]` → missing `[`.
+    // at where `[` should start — e.g. `2 ($in_ten - 2) 0]`.
     // Do not apply when the top open is `(…` (wrong closer for a group).
     if closer == "]"
         && !matches!(
@@ -154,17 +157,18 @@ fn unbalanced_closer(
         && let Some(open_span) = find_missing_list_open_bracket(input, span_offset, close_span)
     {
         return ParseError::LabeledErrorWithHelp {
-            error: "Missing `[` to open a list".into(),
-            label: "expected `[` here".into(),
-            help: "This line ends with `]` but has no matching `[`. \
-                   Add `[` before the list elements (e.g. `[2 ($in_ten - 2) 0]`)."
+            error: "Unexpected `]`".into(),
+            label: "possible place for `[`".into(),
+            help: "Remove this `]` if it is extra, or add `[` before the list elements \
+                   (e.g. `[2 ($in_ten - 2) 0]`)."
                 .into(),
             span: open_span,
         };
     }
 
     // Unexpected `)` with no open `(` on the stack — e.g. `print -n ansi green)`
-    // forgot the `(` before `ansi`. Point at where `(` should be inserted.
+    // may have forgotten `(` before `ansi`, or the `)` may simply be extra.
+    // Point at a likely insert site; keep help dual-path (remove or add).
     // Do not apply when the top open is `[…` (wrong closer for a list, e.g. `[1, 2, 3)`).
     if closer == ")"
         && !matches!(
@@ -174,10 +178,9 @@ fn unbalanced_closer(
         && let Some(open_span) = find_missing_open_paren(input, span_offset, close_span)
     {
         return ParseError::LabeledErrorWithHelp {
-            error: "Missing `(` to open a group".into(),
-            label: "expected `(` here".into(),
-            help: "This expression ends with `)` but has no matching `(`. \
-                   Add `(` before the grouped expression (e.g. `(ansi green)`)."
+            error: "Unexpected `)`".into(),
+            label: "possible place for `(`".into(),
+            help: "Remove this `)` if it is extra, or add `(` before the grouped expression."
                 .into(),
             span: open_span,
         };
@@ -193,9 +196,10 @@ fn unbalanced_closer(
 }
 
 /// On a line ending with an unexpected `]`, if there is no `[` before it on
-/// that line, the human almost always forgot the opening bracket.
+/// that line, offer an insert-site span for a possible opening bracket.
 ///
-/// Returns a span at the start of the list content (after indent).
+/// Returns a span at the start of the list content (after indent). Callers must
+/// keep help dual-path (remove closer or add opener).
 fn find_missing_list_open_bracket(
     input: &[u8],
     span_offset: usize,
@@ -237,10 +241,12 @@ fn find_missing_list_open_bracket(
 }
 
 /// On a line ending with an unexpected `)`, if there is no `(` before it on
-/// that line, the human almost always forgot the opening paren.
+/// that line, offer an insert-site span for a possible opening paren.
 ///
-/// Returns a span where `(` should be inserted — preferably before the
+/// Returns a span where `(` might be inserted — preferably before the
 /// expression being closed (e.g. before `ansi` in `print -n ansi green)`).
+/// Callers must keep help dual-path (remove closer or add opener); the closer
+/// may simply be extra.
 ///
 /// If the line already contains `(`, do not reshape: balanced groups with an
 /// extra `)` (e.g. `print (ansi green))`) must stay plain `Unbalanced`.
