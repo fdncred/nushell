@@ -6,13 +6,14 @@ use crate::{
     engine::{
         CachedFile, Command, CommandType, EngineState, OverlayFrame, ScopeBindings, StateDelta,
         Variable, VirtualPath, Visibility, VisibilityStack, description::build_desc,
+        signature_cache::SignatureCache,
     },
 };
 use core::panic;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 #[cfg(feature = "plugin")]
@@ -37,25 +38,6 @@ pub struct StateWorkingSet<'a> {
     pub parse_errors: Vec<ParseError>,
     pub parse_warnings: Vec<ParseWarning>,
     pub compile_errors: Vec<CompileError>,
-    /// Signatures of *permanent* declarations, built lazily the first time the parser needs
-    /// them and shared for the rest of this working set's life. `Command::signature()` rebuilds
-    /// a `Signature` (several heap allocations) on every call, and the parser asks for it at
-    /// least twice per call site (argument parsing and pipeline type checking), so a file that
-    /// calls the same command many times would otherwise rebuild it many times.
-    ///
-    /// Only permanent declarations are cached: they, and the permanent blocks that back custom
-    /// commands, cannot change while this working set borrows the `EngineState`. Declarations
-    /// in the delta are never cached because `def` replaces a predeclaration's signature in
-    /// place while parsing.
-    ///
-    /// The two caches mirror the two ways the parser reads a signature: the effective signature
-    /// from [`StateWorkingSet::get_signature`] (block-backed commands report their block's
-    /// signature) and the declaration's own `Command::signature()`. They are maps rather than
-    /// id-indexed vectors so that a tiny parse (a REPL line) only pays for the few commands it
-    /// uses. A `Mutex` (never contended; the working set is single-threaded) keeps the type
-    /// `Sync` for miette.
-    permanent_signatures: Mutex<HashMap<DeclId, Arc<Signature>>>,
-    permanent_decl_signatures: Mutex<HashMap<DeclId, Arc<Signature>>>,
 }
 
 impl<'a> StateWorkingSet<'a> {
@@ -76,8 +58,6 @@ impl<'a> StateWorkingSet<'a> {
             parse_errors: vec![],
             parse_warnings: vec![],
             compile_errors: vec![],
-            permanent_signatures: Mutex::new(HashMap::new()),
-            permanent_decl_signatures: Mutex::new(HashMap::new()),
         }
     }
 
@@ -815,16 +795,14 @@ impl<'a> StateWorkingSet<'a> {
 
     /// Shared version of [`StateWorkingSet::get_signature`] for the declaration `decl_id`.
     ///
-    /// Permanent declarations are built once per working set and then returned from a cache;
-    /// declarations in the delta are rebuilt on every call, exactly like `get_signature`.
+    /// Permanent declarations are built once and then returned from a cache on the
+    /// [`EngineState`]; declarations in the delta are rebuilt on every call, exactly like
+    /// `get_signature`, because `def` replaces a predeclaration's signature in place while parsing.
     pub fn get_signature_shared(&self, decl_id: DeclId) -> Arc<Signature> {
         if decl_id.get() >= self.permanent_state.num_decls() {
             return Arc::new(self.get_signature(self.get_decl(decl_id)));
         }
-        let mut cache = self
-            .permanent_signatures
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut cache = SignatureCache::lock(&self.permanent_state.signature_cache.effective);
         Arc::clone(
             cache
                 .entry(decl_id)
@@ -840,10 +818,7 @@ impl<'a> StateWorkingSet<'a> {
         if decl_id.get() >= self.permanent_state.num_decls() {
             return Arc::new(self.get_decl(decl_id).signature());
         }
-        let mut cache = self
-            .permanent_decl_signatures
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut cache = SignatureCache::lock(&self.permanent_state.signature_cache.declared);
         Arc::clone(
             cache
                 .entry(decl_id)
