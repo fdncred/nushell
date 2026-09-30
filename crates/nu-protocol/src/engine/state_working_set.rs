@@ -37,6 +37,10 @@ pub struct StateWorkingSet<'a> {
     pub parse_errors: Vec<ParseError>,
     pub parse_warnings: Vec<ParseWarning>,
     pub compile_errors: Vec<CompileError>,
+    /// The span of the body of the `def` being parsed. `parse_def` compiles the body itself once it
+    /// has closed the body's scope, so the closure parser leaves the closure with this span
+    /// uncompiled instead of compiling it a first time.
+    pub def_body_span: Option<Span>,
     /// Signatures of *permanent* declarations, built lazily the first time the parser needs
     /// them and shared for the rest of this working set's life. `Command::signature()` rebuilds
     /// a `Signature` (several heap allocations) on every call, and the parser asks for it at
@@ -76,6 +80,7 @@ impl<'a> StateWorkingSet<'a> {
             parse_errors: vec![],
             parse_warnings: vec![],
             compile_errors: vec![],
+            def_body_span: None,
             permanent_signatures: Mutex::new(HashMap::new()),
             permanent_decl_signatures: Mutex::new(HashMap::new()),
         }
