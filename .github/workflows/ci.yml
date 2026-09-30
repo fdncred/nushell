@@ -149,6 +149,16 @@ jobs:
         working-directory: ${{ matrix.workspace.path }}
         run: cargo --config "${{ github.workspace }}/.cargo/ci.toml" test ${{ env[matrix.target.options] }} --profile ${{ matrix.workspace.profile }}
 
+      # The same suite with the `lex-once` experimental option on, which must not change anything
+      # the parser produces. Options that aren't set explicitly are read from this variable, so it
+      # reaches every test, including those that spawn `nu`.
+      - name: cargo test (lex-once)
+        if: contains(matrix.target.steps, 'test') && !contains(matrix.workspace.skip, 'test')
+        working-directory: ${{ matrix.workspace.path }}
+        env:
+          NU_EXPERIMENTAL_OPTIONS: lex-once
+        run: cargo --config "${{ github.workspace }}/.cargo/ci.toml" test ${{ env[matrix.target.options] }} --profile ${{ matrix.workspace.profile }}
+
       - name: cargo test --doc
         if: contains(matrix.target.steps, 'doctest') && !contains(matrix.workspace.skip, 'doctest')
         working-directory: ${{ matrix.workspace.path }}

@@ -9,6 +9,7 @@ mod cell_path_types;
 mod dc_glob;
 mod enforce_runtime_annotations;
 mod example;
+mod lex_once;
 mod native_clip;
 mod pipefail;
 mod reorder_cell_paths;
@@ -65,6 +66,7 @@ pub use cell_path_types::CELL_PATH_TYPES;
 pub use dc_glob::DC_GLOB;
 pub use enforce_runtime_annotations::ENFORCE_RUNTIME_ANNOTATIONS;
 pub use example::EXAMPLE;
+pub use lex_once::LEX_ONCE;
 pub use native_clip::NATIVE_CLIP;
 pub use pipefail::PIPE_FAIL;
 pub use reorder_cell_paths::REORDER_CELL_PATHS;
@@ -84,6 +86,7 @@ pub static ALL: &[&ExperimentalOption] = &[
     &ENFORCE_RUNTIME_ANNOTATIONS,
     &NATIVE_CLIP,
     &CELL_PATH_TYPES,
+    &LEX_ONCE,
 ];
 
 #[cfg(test)]
