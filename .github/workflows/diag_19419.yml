@@ -37,10 +37,15 @@ jobs:
           "NU_EXE=$nu" >> $env:GITHUB_ENV
 
       - name: Probe
+        if: false
         timeout-minutes: 25
         env:
           PYWINPTY_BACKEND: "0"
         run: python .github/diag_19419/probe.py --nu "$env:NU_EXE" --out out\release
+
+      - name: Probe with real key events
+        timeout-minutes: 15
+        run: python .github/diag_19419/probe_gui.py --nu "$env:NU_EXE" --out out\gui
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -49,6 +54,7 @@ jobs:
           path: out
 
   main:
+    if: false
     name: nu main (debug build)
     runs-on: windows-latest
     timeout-minutes: 90
