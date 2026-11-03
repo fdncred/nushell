@@ -61,6 +61,17 @@ def describe_exit(code):
     return f"{signed} (0x{code:08X}{', ' + name if name else ''})"
 
 
+def process_rows():
+    """Every process's details. Reading a process that is just exiting can raise nearly anything."""
+    rows = []
+    for proc in psutil.process_iter():
+        try:
+            rows.append(proc.as_dict(["pid", "ppid", "name", "cmdline", "create_time"], ad_value=None))
+        except Exception:
+            pass
+    return rows
+
+
 class Tracked:
     """One descendant, with a handle that outlives the process."""
 
@@ -99,7 +110,7 @@ class Tracker:
         self.thread.start()
 
     def poll_tree(self):
-        rows = [p.info for p in psutil.process_iter(["pid", "ppid", "name", "cmdline", "create_time"])]
+        rows = process_rows()
         by_pid = {r["pid"]: r for r in rows}
         by_parent = collections.defaultdict(list)
         for row in rows:

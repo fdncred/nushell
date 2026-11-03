@@ -18,9 +18,7 @@ import sys
 import time
 import traceback
 
-import psutil
-
-from probe import Tracker, wait_until
+from probe import Tracker, process_rows, wait_until
 
 
 def powershell(script):
@@ -63,24 +61,24 @@ def find_wt():
 
 
 def pids_named(name):
-    return {
-        p.info["pid"]
-        for p in psutil.process_iter(["pid", "name"])
-        if (p.info["name"] or "").lower() == name.lower()
-    }
+    return {row["pid"] for row in process_rows() if (row["name"] or "").lower() == name.lower()}
 
 
-def repl_pids(nu):
+def repl_pids():
     return {
-        p.info["pid"]
-        for p in psutil.process_iter(["pid", "name", "cmdline"])
-        if (p.info["name"] or "").lower() == "nu.exe" and "--no-history" in (p.info["cmdline"] or [])
+        row["pid"]
+        for row in process_rows()
+        if (row["name"] or "").lower() == "nu.exe" and "--no-history" in (row["cmdline"] or [])
     }
 
 
 def open_window(host, nu, work):
-    """Start a REPL in a new window. Returns (repl pid, pid of the window's process)."""
-    before_repl, before_wt = repl_pids(nu), pids_named("WindowsTerminal.exe")
+    """Start a REPL in a new window. Returns (repl pid, window's pid, whether that process is new).
+
+    The runner's own processes can live under an existing Windows Terminal, so only a process that
+    this call started is safe to kill afterwards.
+    """
+    before_repl, before_wt = repl_pids(), pids_named("WindowsTerminal.exe")
     if host == "wt":
         wt = find_wt()
         print("wt:", wt, flush=True)
@@ -89,18 +87,19 @@ def open_window(host, nu, work):
         started = subprocess.Popen([wt, "-w", "new", "-d", str(work), nu, "-n", "--no-history"])
     else:
         started = subprocess.Popen(["conhost.exe", nu, "-n", "--no-history"], cwd=str(work))
-    if not wait_until(lambda: repl_pids(nu) - before_repl, 40):
+    if not wait_until(lambda: repl_pids() - before_repl, 40):
         raise RuntimeError("the REPL did not start")
-    repl = sorted(repl_pids(nu) - before_repl)[0]
+    repl = sorted(repl_pids() - before_repl)[0]
     if host == "wt":
-        terminals = pids_named("WindowsTerminal.exe") - before_wt or pids_named("WindowsTerminal.exe")
-        return repl, sorted(terminals)[0]
-    return repl, started.pid
+        new_terminals = pids_named("WindowsTerminal.exe") - before_wt
+        terminal = sorted(new_terminals or pids_named("WindowsTerminal.exe"))[0]
+        return repl, terminal, bool(new_terminals)
+    return repl, started.pid, True
 
 
 def run(name, host, keys, after, args, work, out_dir):
     result = {"name": name, "line": keys, "root": [host], "checkpoints": [], "focus": []}
-    repl, host_pid = open_window(host, args.nu, work)
+    repl, host_pid, host_is_new = open_window(host, args.nu, work)
     tracker = Tracker(repl)
 
     def checkpoint(label):
@@ -147,7 +146,8 @@ def run(name, host, keys, after, args, work, out_dir):
         checkpoint("after exit code query")
     finally:
         tracker.stop_and_kill()
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(host_pid)], capture_output=True, timeout=20)
+        if host_is_new:
+            subprocess.run(["taskkill", "/F", "/PID", str(host_pid)], capture_output=True, timeout=20)
     return result
 
 
