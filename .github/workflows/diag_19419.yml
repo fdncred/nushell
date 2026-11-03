@@ -37,7 +37,7 @@ jobs:
           "NU_EXE=$nu" >> $env:GITHUB_ENV
 
       - name: Probe
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           PYWINPTY_BACKEND: "0"
         run: python .github/diag_19419/probe.py --nu "$env:NU_EXE" --out out\release
@@ -46,4 +46,36 @@ jobs:
         if: always()
         with:
           name: probe-release
+          path: out
+
+  main:
+    name: nu main (debug build)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install probe dependencies
+        run: python -m pip install pywinpty==3.1.2 psutil==7.2.2
+
+      - name: Build nu
+        run: cargo build --locked -p nu --bin nu
+
+      - name: Probe
+        timeout-minutes: 25
+        env:
+          PYWINPTY_BACKEND: "0"
+        run: python .github/diag_19419/probe.py --nu target\debug\nu.exe --out out\main
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: probe-main
           path: out

@@ -185,8 +185,8 @@ class Tracker:
 class Pty:
     """A process under a pseudoconsole, with its output collected in the background."""
 
-    def __init__(self, argv, cwd, env, raw_path):
-        self.proc = PtyProcess.spawn(argv, cwd=cwd, env=env, dimensions=(40, 120))
+    def __init__(self, argv, cwd, env, raw_path, dims):
+        self.proc = PtyProcess.spawn(argv, cwd=cwd, env=env, dimensions=dims)
         self.raw = open(raw_path, "w", encoding="utf-8", newline="")
         self.out = ""
         self.scanned = 0
@@ -260,11 +260,55 @@ REPL = None  # replaced by the nu under test, started as a REPL
 PING = {"ping.exe": 1}
 
 
-def scenario(name, line=None, root=REPL, ready=PING, after="kill", lec=PRINT_EXIT_CODE):
-    return {"name": name, "line": line, "root": root, "ready": ready, "after": after, "lec": lec}
+NESTED = "nu -c '^cmd /c inner.cmd'"
+KEY_REPEAT = (0,) + (0.033,) * 15
+
+
+def scenario(
+    name,
+    line=None,
+    root=REPL,
+    ready=PING,
+    after="kill",
+    lec=PRINT_EXIT_CODE,
+    presses=(0,),
+    settle=3,
+    post_wait=4,
+    dims=(40, 120),
+):
+    """`presses` holds the wait before each Ctrl-C; `settle` is the wait before the first of them."""
+    return {
+        "name": name,
+        "line": line,
+        "root": root,
+        "ready": ready,
+        "after": after,
+        "lec": lec,
+        "presses": presses,
+        "settle": settle,
+        "post_wait": post_wait,
+        "dims": dims,
+    }
 
 
 SCENARIOS = [
+    # Repeated presses: twice quickly, again while the batch prompt is up, and a held key.
+    scenario("two_presses", NESTED, presses=(0, 0.2)),
+    scenario("press_at_prompt", NESTED, presses=(0, 2, 2)),
+    scenario("key_repeat", NESTED, presses=KEY_REPEAT),
+    scenario("key_repeat_answer", NESTED, presses=KEY_REPEAT, after="answer"),
+    # Timing: the moment ping appears, and a nested nu that goes away only after a while.
+    scenario("early_press", NESTED, settle=0),
+    scenario("long_wait", NESTED, post_wait=25),
+    # A narrow terminal takes the other branch of the default display_output hook.
+    scenario("narrow", NESTED, dims=(24, 80)),
+    # The parent REPL with config, where the report has a display_output hook of its own.
+    scenario("default_config", NESTED, root=["NU", "--no-history"]),
+    scenario("user_hook", NESTED, root=["NU", "--config", "CFG", "--no-history"]),
+    # A .cmd started directly, which is how `bun.cmd` and friends usually run.
+    scenario("cmd_directly", "nu -c '^.\\inner.cmd'"),
+    scenario("cmd_directly_repl", "^.\\inner.cmd", after="answer"),
+
     # What nu does on Ctrl-C when no batch file is involved.
     scenario("nested_sleep", "nu -c 'sleep 1hr'", ready={"nu.exe": 2}),
     # The control from the issue: no orphan, and the batch prompt can be answered.
@@ -299,9 +343,10 @@ def run_scenario(spec, args, work, out_dir):
     env = dict(os.environ)
     env["PATH"] = str(pathlib.Path(args.nu).parent) + os.pathsep + env.get("PATH", "")
     root = spec["root"] or [args.nu, "-n", "--no-history"]
-    root = [args.nu if part == "NU" else part for part in root]
+    tokens = {"NU": args.nu, "CFG": str(work / "cfg.nu")}
+    root = [tokens.get(part, part) for part in root]
     result = {"name": spec["name"], "line": spec["line"], "root": root, "checkpoints": []}
-    pty = Pty(root, str(work), env, out_dir / f"{spec['name']}.raw.txt")
+    pty = Pty(root, str(work), env, out_dir / f"{spec['name']}.raw.txt", spec["dims"])
     tracker = Tracker(pty.proc.pid)
 
     def checkpoint(label):
@@ -315,12 +360,14 @@ def run_scenario(spec, args, work, out_dir):
             time.sleep(1)
             pty.type_line(spec["line"])
         result["ready"] = wait_until(lambda: tracker.has(spec["ready"]), 60)
-        time.sleep(3)
+        time.sleep(spec["settle"])
         checkpoint("before ctrl-c")
 
         tracker.t0 = time.monotonic()
-        pty.write("\x03")
-        time.sleep(4)
+        for delay in spec["presses"]:
+            time.sleep(delay)
+            pty.write("\x03")
+        time.sleep(spec["post_wait"])
         checkpoint("after ctrl-c")
 
         if spec["after"] == "answer":
@@ -381,6 +428,10 @@ def main():
     work.mkdir(exist_ok=True)
     (work / "inner.cmd").write_text(INNER_CMD, newline="")
     (work / "start.nu").write_text("^cmd /c inner.cmd\n")
+    (work / "cfg.nu").write_text(
+        "$env.config.hooks.display_output = {|| if (term size).columns >= 100 { table -e } else { table } }\n"
+    )
+    args.nu = str(pathlib.Path(args.nu).absolute())
 
     print("windows:", sys.getwindowsversion(), flush=True)
     print(subprocess.run([args.nu, "--version"], capture_output=True, text=True).stdout, flush=True)
