@@ -44,7 +44,7 @@ KNOWN_EXIT_CODES = {
     0xC00000FD: "STATUS_STACK_OVERFLOW",
 }
 
-ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_78=>]")
 TERMINAL_QUERY = re.compile(r"\x1b\[(6n|0?c)")
 
 
@@ -372,6 +372,8 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--only", default="")
     args = parser.parse_args()
+    # The runner's stdout is cp1252, which can't print everything nu draws.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     out_dir = pathlib.Path(args.out).absolute()
     out_dir.mkdir(parents=True, exist_ok=True)
